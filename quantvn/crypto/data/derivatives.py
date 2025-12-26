@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional, Union
 
 import pandas as pd
 from tqdm import tqdm
@@ -14,7 +15,7 @@ __all__ = ["get_hist"]
 def get_hist(
     symbol: str,
     interval: str = "1m",
-    cache_dir: str | Path | None = None,
+    cache_dir: Optional[Union[str, Path]] = None,
 ) -> pd.DataFrame:
     """
     Fetch historical monthly data from Binance.

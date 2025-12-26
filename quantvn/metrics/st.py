@@ -1,6 +1,6 @@
 import logging
 from abc import abstractmethod
-from typing import TypedDict, List, Dict, Union
+from typing import TypedDict, List, Dict, Union, Optional
 
 import numpy as np
 import pandas as pd
@@ -44,16 +44,16 @@ class Algorithm:
         self._from_time = None
         self._to_time = None
         self._df_ticker = pd.DataFrame()
-        self._init_price: float | None = None
+        self._init_price: Optional[float] = None
 
-        self._bm_open_size: int | None = None
-        self._bm_equity: float | None = None
+        self._bm_open_size: Optional[int] = None
+        self._bm_equity: Optional[float] = None
 
-        self._current_time_idx: int | None = None
-        self._current_time: pd.Timestamp | None = None
-        self._current_position: float | None = None
-        self._current_open_size: int | None = None
-        self._current_equity: float | None = None
+        self._current_time_idx: Optional[int] = None
+        self._current_time: Optional[pd.Timestamp] = None
+        self._current_position: Optional[float] = None
+        self._current_open_size: Optional[int] = None
+        self._current_equity: Optional[float] = None
 
         self._ht_times: List[pd.Timestamp] = []
         self._ht_prices: List[float] = []
@@ -61,7 +61,7 @@ class Algorithm:
         self._bt_df: Union[pd.DataFrame, None] = None
         self._bt_columns = list(HistoryRecord.__annotations__.keys())
         self.performance: Dict[str, float] = {}
-        self._signals: pd.Series | None = None
+        self._signals: Optional[pd.Series] = None
 
     # -------------------- Data helpers --------------------
     @property
@@ -379,7 +379,7 @@ class TimeseriesFeatures:
 
 
 class StrategyPerformance:
-    def __init__(self, returns: pd.Series | np.ndarray):
+    def __init__(self, returns: Union[pd.Series, np.ndarray]):
         import quantstats as qs
         if isinstance(returns, np.ndarray):
             returns = pd.Series(returns)

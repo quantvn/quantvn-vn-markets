@@ -12,7 +12,7 @@ class Config:
     Configuration class for managing the API key and providing the API endpoint.
 
     Attributes:
-        _api_key (str | None): The stored API key. Defaults to None.
+        _api_key (Optional[str]): The stored API key. Defaults to None.
     """
 
     _api_key: Optional[str] = None

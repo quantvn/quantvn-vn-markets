@@ -2,6 +2,7 @@
 import time, random, requests
 import pandas as pd
 import numpy as np
+from typing import Optional
 
 DEFAULT_TIMEOUT = 25
 
@@ -54,7 +55,7 @@ def merge_fund_into_price(
     ticker_col: str = "ticker",
     quarter_col: str = "quarter",
     year_col: str = "year",
-    assume_ticker: str | None = None,
+    assume_ticker: Optional[str] = None,
     report_release_lag_days: int = 0,
     drop_all_nan_cols: bool = True
 ) -> pd.DataFrame:

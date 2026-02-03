@@ -135,6 +135,35 @@ class Backtest_Derivates:
         """
         return abs(self.df["position"].diff().dropna()).sum() / len(self.daily_PNL())
 
+    def plot_PNL(self, daily: bool = False, title: str = "Backtest Stock"):
+        """
+        Vẽ duy nhất 1 đường equity sau phí.
+        - daily=False: tích lũy theo từng bar
+        - daily=True : gộp theo ngày rồi mới tích lũy
+        """
+        if "pnl_after_fees" not in self.df.columns:
+            raise ValueError("Chưa có cột 'pnl_after_fees' trong self.df")
+
+        if daily:
+            eq = self.df.groupby(self.df.index.date)["pnl_after_fees"].sum().cumsum()
+            x = pd.to_datetime(eq.index)
+            y = eq.values
+            x_label = "Date"
+        else:
+            eq = self.df["pnl_after_fees"].cumsum()
+            x = eq.index
+            y = eq.values
+            x_label = "Time"
+
+        plt.figure(figsize=(10, 4))
+        plt.plot(x, y, linewidth=1.4)
+        plt.title(title)
+        plt.xlabel(x_label)
+        plt.ylabel("Cumulative PnL (after fees)")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
 
 class Backtest_Stock:
     """

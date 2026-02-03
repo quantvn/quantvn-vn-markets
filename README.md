@@ -86,26 +86,15 @@ print(liquid_stocks.head())
 ```python
 from quantvn.vn.data import get_stock_hist
 
-# Lấy dữ liệu theo phút
-vic_minute = get_stock_hist("VIC", resolution="m")
-print(vic_minute.head())
-
-# Lấy dữ liệu theo giờ
-vic_hour = get_stock_hist("VIC", resolution="h")
+# Lấy dữ liệu 1H (ví dụ sử dụng khung giờ 1H)
+vic_hour = get_stock_hist("VIC", resolution="1H")
 print(vic_hour.head())
-
-# Lấy dữ liệu theo ngày
-vic_daily = get_stock_hist("VIC", resolution="1D")
-print(vic_daily.head())
 ```
 
 **Tham số:**
 
 - `symbol` (str): Mã cổ phiếu (VD: "VIC", "HPG", "VCB")
-- `resolution` (str): Khung thời gian
-  - `"m"`: Phút
-  - `"h"` hoặc `"1H"`: Giờ
-  - `"1D"`: Ngày
+- `resolution` (str): Khung thời gian, hiện chỉ hỗ trợ `"1H"` (bắt buộc).
 
 **Output:**
 
@@ -124,15 +113,15 @@ company = Company("VIC")
 
 # Thông tin tổng quan
 overview = company.overview()
-print(overview[["ticker", "exchange", "industry", "stockRating"]])
+print(overview[["symbol", "id", "issue_share", "icb_name2", "icb_name4"]])
 
 # Hồ sơ công ty
 profile = company.profile()
-print(profile["companyName"])
+print(profile.get("companyProfile"))
 
 # Danh sách cổ đông
 shareholders = company.shareholders()
-print(shareholders[["name", "ownPercent"]].head())
+print(shareholders.head())
 
 # Ban lãnh đạo
 officers = company.officers()
@@ -155,33 +144,31 @@ ratios = company.ratio_summary()
 print(ratios[["pe", "pb", "roe", "roa"]])
 ```
 
-#### 1.4. Báo cáo tài chính
+#### 1.4. Tỷ số tài chính
 
 ```python
 from quantvn.vn.data import Finance
 
+# Khởi tạo Finance (dùng BACKEND mặc định)
 finance = Finance("HPG")
 
-# Báo cáo kết quả kinh doanh (năm)
-income_year = finance.income_statement(period="year")
-print(income_year[["year", "revenue", "preTaxProfit"]].head())
+# Tỷ số tài chính theo quý
+ratios_q = finance.ratio(period="Q")
+print("Tỷ số tài chính theo quý:")
+if not ratios_q.empty:
+    print(ratios_q[["year", "quarter", "revenue", "netProfit", "roe", "pe", "pb"]].head())
 
-# Báo cáo kết quả kinh doanh (quý)
-income_quarter = finance.income_statement(period="quarter")
-print(income_quarter.head())
-
-# Bảng cân đối kế toán
-balance = finance.balance_sheet(period="year")
-print(balance.head())
-
-# Báo cáo lưu chuyển tiền tệ
-cashflow = finance.cash_flow(period="year")
-print(cashflow.head())
+# Tỷ số tài chính theo năm
+ratios_y = finance.ratio(period="Y")
+print("\nTỷ số tài chính theo năm:")
+if not ratios_y.empty:
+    print(ratios_y[["year", "revenue", "netProfit", "roe", "pe", "pb"]].head())
 ```
 
 **Tham số:**
 
-- `period` (str): `"year"` (năm) hoặc `"quarter"` (quý)
+- `period` (str): `"Q"` (quý) hoặc `"Y"` (năm)
+- `dropna` (bool): Loại bỏ các giá trị null (mặc định: `False`)
 
 #### 1.5. Dữ liệu Quote realtime
 
@@ -270,9 +257,11 @@ print(vn30_1m.head())
 vn30_5m = get_derivatives_hist("VN30F1M", resolution="5m")
 print(vn30_5m.head())
 
-# Các resolution hỗ trợ: "1m", "5m", "15m", "30m", "1H", "1D"
-vn30_1h = get_derivatives_hist("VN30F1M", resolution="1H")
-vn30_daily = get_derivatives_hist("VN30F1M", resolution="1D")
+# Dữ liệu VN30F1M theo 15 phút
+vn30_15m = get_derivatives_hist("VN30F1M", resolution="15m")
+print(vn30_15m.head())
+
+# Các resolution hỗ trợ: "1m", "5m", "15m"
 ```
 
 **Output:**
@@ -383,7 +372,7 @@ nikkei = global_market.world_index("N225").quote.history(
 from quantvn.vn.data import add_all_ta_features, get_stock_hist
 
 # Lấy dữ liệu
-df = get_stock_hist("VIC", resolution="1D")
+df = get_stock_hist("VIC", resolution="1H")
 
 # Thêm tất cả chỉ báo kỹ thuật
 df_with_ta = add_all_ta_features(df)
@@ -398,7 +387,7 @@ print(df_with_ta.columns)
 from quantvn.vn.data import add_all_fund_features, get_stock_hist
 
 # Lấy dữ liệu
-df = get_stock_hist("HPG", resolution="1D")
+df = get_stock_hist("HPG", resolution="1H")
 
 # Thêm các chỉ số tài chính (PE, PB, ROE, ROA, etc.)
 df_with_fund = add_all_fund_features(df, symbol="HPG")
@@ -489,7 +478,7 @@ from quantvn.vn.metrics import Backtest_Stock
 from quantvn.vn.data import get_stock_hist
 
 # Lấy dữ liệu
-df = get_stock_hist("VIC", resolution="h")
+df = get_stock_hist("VIC", resolution="1H")
 
 # Tạo chiến lược đơn giản
 df["ma20"] = df["Close"].rolling(20).mean()
@@ -605,20 +594,21 @@ import matplotlib.pyplot as plt
 client(apikey="your_api_key")
 
 # Lấy dữ liệu giá
-vic_data = get_stock_hist("VIC", resolution="1D")
+vic_data = get_stock_hist("VIC", resolution="1H")
 
 # Thông tin công ty
 company = Company("VIC")
 overview = company.overview()
-print("Công ty:", overview["ticker"].iloc[0])
-print("Ngành:", overview["industry"].iloc[0])
-print("Đánh giá:", overview["stockRating"].iloc[0])
+print("Công ty:", overview["symbol"].iloc[0])
+print("ICB2:", overview["icb_name2"].iloc[0])
+print("ICB4:", overview["icb_name4"].iloc[0])
 
-# Báo cáo tài chính
+# Tỷ số tài chính
 finance = Finance("VIC")
-income = finance.income_statement(period="year")
-print("\nDoanh thu 3 năm gần nhất:")
-print(income[["year", "revenue", "preTaxProfit"]].head(3))
+ratios = finance.ratio(period="Y")
+print("\nTỷ số tài chính 3 năm gần nhất:")
+if not ratios.empty:
+    print(ratios[["year", "revenue", "netProfit", "roe", "pe", "pb"]].head(3))
 
 # Vẽ biểu đồ giá
 plt.figure(figsize=(12, 6))

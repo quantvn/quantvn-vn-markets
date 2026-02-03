@@ -293,7 +293,9 @@ class TradingBacktest:
         positions = df["position"]
         new_positions = positions.copy()
 
-        assert set(positions.unique()) == {-1, 0, 1}, "Positions must be -1 (Short), 0 (Neutral), 1 (Long) only"
+        invalid_positions = set(positions.unique()) - {-1, 0, 1}
+        if invalid_positions:
+            raise ValueError(f"Positions must be in [-1, 0, 1]. Invalid: {invalid_positions}")
 
         # Tracking for each holding window
         entry_price = None
@@ -348,7 +350,9 @@ class TradingBacktest:
         positions = df["position"]
         new_positions = positions.copy()
 
-        assert set(positions.unique()) == {-1, 0, 1}, "Positions must be -1 (Short), 0 (Neutral), 1 (Long) only"
+        invalid_positions = set(positions.unique()) - {-1, 0, 1}
+        if invalid_positions:
+            raise ValueError(f"Positions must be in [-1, 0, 1]. Invalid: {invalid_positions}")
 
         # Tracking for trailing stop loss
         max_price = None

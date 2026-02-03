@@ -21,9 +21,9 @@ def get_hist(symbol: str, frequency: str):
     Parameters
     ----------
     symbol : str
-        Derivatives symbol (e.g. "VN30F1M", "VN30F2M").
+        Only supports VN30F1M (case-insensitive).
     frequency : str
-        Timeframe to get data (e.g. "1D", "1H", "5M").
+        Timeframe to get data. Supported: "1m", "5m", "15m" (case-insensitive).
     Returns
     -------
     dict
@@ -34,8 +34,16 @@ def get_hist(symbol: str, frequency: str):
     Exception
         If there is an error when calling the API.
     """
+    sym = str(symbol).upper().strip()
+    if sym != "VN30F1M":
+        raise ValueError("Only VN30F1M is supported.")
+
+    freq = str(frequency or "").lower()
+    if freq not in {"1m", "5m", "15m"}:
+        raise ValueError("frequency must be one of: '1m', '5m', '15m'.")
+
     api_key = Config.get_api_key()
-    payload = {"symbol": symbol, "frequency": frequency}
+    payload = {"symbol": sym, "frequency": freq}
 
     response = requests.post(
         f"{LAMBDA_URL}/data-derivatives",

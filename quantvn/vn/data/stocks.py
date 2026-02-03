@@ -20,6 +20,8 @@ import datetime as dt
 import io
 import itertools
 import json
+import os
+import time
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
@@ -49,6 +51,41 @@ _MAX_REQUESTS = 2000  # giới hạn an toàn số lần phân trang
 
 # Giữ cho API cũ list_liquid_asset (nếu bạn dùng ở nơi khác)
 LAMBDA_URL = Config.get_link()
+
+
+def _backend_headers() -> Dict[str, str]:
+    """
+    Headers mặc định cho backend FastAPI:
+    - luôn cố gắng gắn x-api-key (nếu cấu hình có).
+    """
+    api_key = Config.get_api_key()
+    return {"x-api-key": api_key} if api_key else {}
+
+
+# ===== Backend FastAPI (this repo) =====
+def _backend_api_base() -> str:
+    """
+    Base URL cho FastAPI backend (v1). Ưu tiên env:
+      - LAMBDA_URL (vd: https://d207hp2u5nyjgn.cloudfront.net)
+    """
+    base = LAMBDA_URL
+    return base.rstrip("/")
+
+
+def _backend_get_json(
+    path: str, params: Optional[dict] = None, timeout: int = _TIMEOUT
+):
+    """
+    GET JSON từ backend FastAPI.
+    - path: /company/... hoặc company/... (auto join với base)
+    """
+    base = _backend_api_base()
+    url = f"{base}/{str(path).lstrip('/')}"
+    resp = requests.get(
+        url, params=params or {}, timeout=timeout, headers=_backend_headers()
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def list_liquid_asset() -> pd.DataFrame:
@@ -415,28 +452,526 @@ def _fetch_entrade_data(symbol: str, resolution: str) -> pd.DataFrame:
 
 # ===================== Reorganized: Company & Finance =====================
 
+# ===== VCI GraphQL API Constants =====
+VCI_GRAPHQL_URL = "https://trading.vietcap.com.vn/data-mt/graphql"
 
-class Company:
-    """Company information via TCBS tcanalysis endpoints."""
+FULL_COMPANY_QUERY = """
+query Query($ticker: String!, $lang: String!) {
+  AnalysisReportFiles(ticker: $ticker, langCode: $lang) {
+    date
+    description
+    link
+    name
+    __typename
+  }
+  News(ticker: $ticker, langCode: $lang) {
+    id
+    organCode
+    ticker
+    newsTitle
+    newsSubTitle
+    friendlySubTitle
+    newsImageUrl
+    newsSourceLink
+    createdAt
+    publicDate
+    updatedAt
+    langCode
+    newsId
+    newsShortContent
+    newsFullContent
+    closePrice
+    referencePrice
+    floorPrice
+    ceilingPrice
+    percentPriceChange
+    __typename
+  }
+  TickerPriceInfo(ticker: $ticker) {
+    financialRatio {
+      yearReport
+      lengthReport
+      updateDate
+      revenue
+      revenueGrowth
+      netProfit
+      netProfitGrowth
+      ebitMargin
+      roe
+      roic
+      roa
+      pe
+      pb
+      eps
+      currentRatio
+      cashRatio
+      quickRatio
+      interestCoverage
+      ae
+      fae
+      netProfitMargin
+      grossMargin
+      ev
+      issueShare
+      ps
+      pcf
+      bvps
+      evPerEbitda
+      at
+      fat
+      acp
+      dso
+      dpo
+      epsTTM
+      charterCapital
+      RTQ4
+      charterCapitalRatio
+      RTQ10
+      dividend
+      ebitda
+      ebit
+      le
+      de
+      ccc
+      RTQ17
+      __typename
+    }
+    ticker
+    exchange
+    ev
+    ceilingPrice
+    floorPrice
+    referencePrice
+    openPrice
+    matchPrice
+    closePrice
+    priceChange
+    percentPriceChange
+    highestPrice
+    lowestPrice
+    totalVolume
+    highestPrice1Year
+    lowestPrice1Year
+    percentLowestPriceChange1Year
+    percentHighestPriceChange1Year
+    foreignTotalVolume
+    foreignTotalRoom
+    averageMatchVolume2Week
+    foreignHoldingRoom
+    currentHoldingRatio
+    maxHoldingRatio
+    __typename
+  }
+  Subsidiary(ticker: $ticker) {
+    id
+    organCode
+    subOrganCode
+    percentage
+    subOrListingInfo {
+      enOrganName
+      organName
+      __typename
+    }
+    __typename
+  }
+  Affiliate(ticker: $ticker) {
+    id
+    organCode
+    subOrganCode
+    percentage
+    subOrListingInfo {
+      enOrganName
+      organName
+      __typename
+    }
+    __typename
+  }
+  CompanyListingInfo(ticker: $ticker) {
+    id
+    issueShare
+    en_History
+    history
+    en_CompanyProfile
+    companyProfile
+    icbName3
+    enIcbName3
+    icbName2
+    enIcbName2
+    icbName4
+    enIcbName4
+    financialRatio {
+      id
+      ticker
+      issueShare
+      charterCapital
+      __typename
+    }
+    __typename
+  }
+  OrganizationManagers(ticker: $ticker) {
+    id
+    ticker
+    fullName
+    positionName
+    positionShortName
+    en_PositionName
+    en_PositionShortName
+    updateDate
+    percentage
+    quantity
+    __typename
+  }
+  OrganizationShareHolders(ticker: $ticker) {
+    id
+    ticker
+    ownerFullName
+    en_OwnerFullName
+    quantity
+    percentage
+    updateDate
+    __typename
+  }
+  OrganizationResignedManagers(ticker: $ticker) {
+    id
+    ticker
+    fullName
+    positionName
+    positionShortName
+    en_PositionName
+    en_PositionShortName
+    updateDate
+    percentage
+    quantity
+    __typename
+  }
+  OrganizationEvents(ticker: $ticker) {
+    id
+    organCode
+    ticker
+    eventTitle
+    en_EventTitle
+    publicDate
+    issueDate
+    sourceUrl
+    eventListCode
+    ratio
+    value
+    recordDate
+    exrightDate
+    eventListName
+    en_EventListName
+    __typename
+  }
+}
+""".strip()
 
-    def __init__(self, symbol):
-        self.symbol = symbol
 
-    def overview(self):
+# ===== VCI Finance Ratio (CompanyFinancialRatio) =====
+FINANCE_RATIO_QUERY = """
+fragment Ratios on CompanyFinancialRatio {
+  ticker
+  yearReport
+  lengthReport
+  updateDate
+  revenue
+  revenueGrowth
+  netProfit
+  netProfitGrowth
+  ebitMargin
+  roe
+  roic
+  roa
+  pe
+  pb
+  eps
+  currentRatio
+  cashRatio
+  quickRatio
+  interestCoverage
+  netProfitMargin
+  grossMargin
+  ev
+  issueShare
+  ps
+  pcf
+  bvps
+  evPerEbitda
+  charterCapital
+  dividend
+  ebitda
+  ebit
+}
+
+query Query($ticker: String!, $period: String!) {
+  CompanyFinancialRatio(ticker: $ticker, period: $period) {
+    ratio {
+      ...Ratios
+    }
+    period
+  }
+}
+""".strip()
+
+
+def _build_vci_headers(user_agent: Optional[str] = None) -> Dict[str, str]:
+    """Build headers for VCI GraphQL API requests."""
+    ua = user_agent or (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9,vi-VN;q=0.8,vi;q=0.7",
+        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Referer": "https://trading.vietcap.com.vn/",
+        "Origin": "https://trading.vietcap.com.vn/",
+        "User-Agent": ua,
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-ch-ua-mobile": "?0",
+    }
+
+
+def _vci_graphql_request(
+    query: str,
+    variables: Dict[str, Any],
+    timeout: int = 30,
+    max_retries: int = 3,
+    backoff_seconds: float = 1.5,
+) -> Dict[str, Any]:
+    """Send GraphQL request to VCI API with retry logic."""
+    headers = _build_vci_headers()
+    payload = {"query": query, "variables": variables}
+
+    last_err: Optional[Exception] = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(
+                VCI_GRAPHQL_URL,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+
+            data = resp.json()
+            if "errors" in data and data["errors"]:
+                raise RuntimeError(f"GraphQL errors: {data['errors']}")
+
+            if "data" not in data:
+                raise RuntimeError(f"Unexpected response: {data}")
+
+            return data["data"]
+
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries:
+                time.sleep(backoff_seconds * attempt)
+                continue
+            raise
+
+    raise last_err or RuntimeError("Unknown error")
+
+
+def _slice_page(items: list[Any], page_size: int, page: int) -> list[Any]:
+    """Slice list by page/page_size (TCBS-like signature compatibility)."""
+    try:
+        size = int(page_size)
+        p = int(page)
+    except Exception:
+        size, p = 50, 0
+    if size <= 0:
+        return items
+    start = max(0, p) * size
+    end = start + size
+    return items[start:end]
+
+
+class _CompanyProvider:
+    """Internal provider interface (do not use directly)."""
+
+    def overview(self) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def profile(self) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def shareholders(
+        self, page_size: int = 50, page: int = 0
+    ) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def officers(
+        self, page_size: int = 50, page: int = 0
+    ) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def subsidiaries(
+        self, page_size: int = 100, page: int = 0
+    ) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def events(
+        self, page_size: int = 15, page: int = 0
+    ) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def news(
+        self, page_size: int = 15, page: int = 0
+    ) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+    def ratio_summary(self) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+
+class _VCICompanyProvider(_CompanyProvider):
+    """Company provider via VCI GraphQL API."""
+
+    def __init__(self, symbol: str, *, lang: str = "vi"):
+        self.symbol = str(symbol).upper().strip()
+        self.lang = lang or "vi"
+        self._cache: Optional[Dict[str, Any]] = None
+
+    def _company_full(self) -> Dict[str, Any]:
+        if self._cache is None:
+            self._cache = _vci_graphql_request(
+                query=FULL_COMPANY_QUERY,
+                variables={"ticker": self.symbol, "lang": self.lang},
+            )
+        return self._cache
+
+    def overview(self) -> pd.DataFrame:
+        """
+        vnstock-like overview for VCI source.
+
+        Output columns (snake_case), best-effort:
+        - symbol, id, issue_share, history, company_profile,
+          icb_name3, icb_name2, icb_name4,
+          financial_ratio_issue_share, charter_capital
+        """
+        data = self._company_full()
+        info = data.get("CompanyListingInfo") or {}
+        if not isinstance(info, dict) or not info:
+            return pd.DataFrame()
+
+        fr = info.get("financialRatio") or {}
+        row = {
+            "symbol": self.symbol,
+            "id": info.get("id"),
+            "issue_share": info.get("issueShare"),
+            "history": info.get("history"),
+            "company_profile": info.get("companyProfile"),
+            "icb_name3": info.get("icbName3"),
+            "icb_name2": info.get("icbName2"),
+            "icb_name4": info.get("icbName4"),
+            "financial_ratio_issue_share": (
+                fr.get("issueShare") if isinstance(fr, dict) else None
+            ),
+            "charter_capital": (
+                fr.get("charterCapital") if isinstance(fr, dict) else None
+            ),
+        }
+        return pd.DataFrame([row])
+
+    def profile(self) -> pd.DataFrame:
+        data = self._company_full()
+        info = data.get("CompanyListingInfo")
+        if not info:
+            return pd.DataFrame()
+        return pd.json_normalize(info)
+
+    def shareholders(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
+        data = self._company_full()
+        items = data.get("OrganizationShareHolders") or []
+        if not isinstance(items, list) or not items:
+            return pd.DataFrame()
+        return pd.DataFrame(_slice_page(items, page_size, page))
+
+    def officers(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
+        # VCI field: OrganizationManagers (map to officers/key persons)
+        data = self._company_full()
+        items = data.get("OrganizationManagers") or []
+        if not isinstance(items, list) or not items:
+            return pd.DataFrame()
+        return pd.DataFrame(_slice_page(items, page_size, page))
+
+    def subsidiaries(self, page_size: int = 100, page: int = 0) -> pd.DataFrame:
+        data = self._company_full()
+        items = data.get("Subsidiary") or []
+        if not isinstance(items, list) or not items:
+            return pd.DataFrame()
+        return pd.DataFrame(_slice_page(items, page_size, page))
+
+    def events(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
+        data = self._company_full()
+        items = data.get("OrganizationEvents") or []
+        if not isinstance(items, list) or not items:
+            return pd.DataFrame()
+        return pd.DataFrame(_slice_page(items, page_size, page))
+
+    def news(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
+        data = self._company_full()
+        items = data.get("News") or []
+        if not isinstance(items, list) or not items:
+            return pd.DataFrame()
+        return pd.DataFrame(_slice_page(items, page_size, page))
+
+    def ratio_summary(self) -> pd.DataFrame:
+        """
+        Return a 1-row DataFrame of financial ratios.
+        Keeps backward-compat columns: year/quarter (best-effort).
+        """
+        data = self._company_full()
+        info = (data.get("TickerPriceInfo") or {}).get("financialRatio") or {}
+        if not isinstance(info, dict) or not info:
+            return pd.DataFrame()
+
+        # Backward-compat for quantvn.vn.data.core expectations
+        year = info.get("yearReport")
+        length = info.get("lengthReport")
+        quarter = (
+            length
+            if isinstance(length, (int, float)) and int(length) in (1, 2, 3, 4)
+            else pd.NA
+        )
+
+        row = dict(info)
+        row["ticker"] = self.symbol
+        row["year"] = year
+        row["quarter"] = quarter
+        return pd.DataFrame([row])
+
+
+class _TCBSCompanyProvider(_CompanyProvider):
+    """Company provider via TCBS tcanalysis endpoints (kept as optional fallback)."""
+
+    def __init__(self, symbol: str):
+        self.symbol = str(symbol).upper().strip()
+
+    def overview(self) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/ticker/{self.symbol}/overview"
         data = send_request(url)
         return pd.DataFrame(data, index=[0])
 
-    def profile(self):
+    def profile(self) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/company/{self.symbol}/overview"
         data = send_request(url)
         return pd.json_normalize(data)
 
-    def shareholders(self, page_size=50, page=0):
+    def shareholders(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/company/{self.symbol}/large-share-holders"
@@ -444,7 +979,7 @@ class Company:
         items = (data or {}).get("listShareHolder", [])
         return pd.json_normalize(items)
 
-    def officers(self, page_size=50, page=0):
+    def officers(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/company/{self.symbol}/key-officers"
@@ -452,7 +987,7 @@ class Company:
         items = (data or {}).get("listKeyOfficer", [])
         return pd.json_normalize(items)
 
-    def subsidiaries(self, page_size=100, page=0):
+    def subsidiaries(self, page_size: int = 100, page: int = 0) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/company/{self.symbol}/sub-companies"
@@ -460,7 +995,7 @@ class Company:
         items = (data or {}).get("listSubCompany", [])
         return pd.json_normalize(items)
 
-    def events(self, page_size=15, page=0):
+    def events(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/ticker/{self.symbol}/events-news"
@@ -468,7 +1003,7 @@ class Company:
         items = (data or {}).get("listEventNews", [])
         return pd.DataFrame(items)
 
-    def news(self, page_size=15, page=0):
+    def news(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/ticker/{self.symbol}/activity-news"
@@ -476,7 +1011,7 @@ class Company:
         items = (data or {}).get("listActivityNews", [])
         return pd.DataFrame(items)
 
-    def ratio_summary(self):
+    def ratio_summary(self) -> pd.DataFrame:
         BASE = "https://apipubaws.tcbs.com.vn"
         ANALYSIS = "tcanalysis"
         url = f"{BASE}/{ANALYSIS}/v1/ticker/{self.symbol}/ratios"
@@ -493,40 +1028,459 @@ class Company:
             return pd.DataFrame(data)
 
 
-FIN_MAP = {
-    "income_statement": "incomestatement",
-    "balance_sheet": "balancesheet",
-    "cash_flow": "cashflow",
+class _BackendCompanyProvider(_CompanyProvider):
+    """Company provider via backend FastAPI endpoints (/v1/company/*)."""
+
+    def __init__(
+        self, symbol: str, *, lang: str = "vi", api_base: Optional[str] = None
+    ):
+        self.symbol = str(symbol).upper().strip()
+        self.lang = lang or "vi"
+        self.api_base = api_base or LAMBDA_URL or ""
+
+    def _get(self, path: str, params: Optional[dict] = None):
+        """
+        Generic GET helper for backend REST API.
+
+        `path` là path không bao gồm symbol (ví dụ: "/company/overview").
+        Mã chứng khoán (symbol) và các tham số khác truyền qua `params`.
+        """
+        if self.api_base:
+            base = self.api_base.rstrip("/")
+            url = f"{base}/{str(path).lstrip('/')}"
+            resp = requests.get(
+                url,
+                params=params or {},
+                timeout=_TIMEOUT,
+                headers=_backend_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+        return _backend_get_json(path, params=params, timeout=_TIMEOUT)
+
+    def overview(self) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/overview", params={"symbol": self.symbol, "lang": self.lang}
+            )
+            return (
+                pd.DataFrame([data])
+                if isinstance(data, dict) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def profile(self) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/profile", params={"symbol": self.symbol, "lang": self.lang}
+            )
+            return (
+                pd.json_normalize(data)
+                if isinstance(data, dict) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def shareholders(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/shareholders",
+                params={
+                    "symbol": self.symbol,
+                    "lang": self.lang,
+                    "page_size": page_size,
+                    "page": page,
+                },
+            )
+            return (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def officers(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/officers",
+                params={
+                    "symbol": self.symbol,
+                    "lang": self.lang,
+                    "page_size": page_size,
+                    "page": page,
+                },
+            )
+            return (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def subsidiaries(self, page_size: int = 100, page: int = 0) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/subsidiaries",
+                params={
+                    "symbol": self.symbol,
+                    "lang": self.lang,
+                    "page_size": page_size,
+                    "page": page,
+                },
+            )
+            return (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def events(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/events",
+                params={
+                    "symbol": self.symbol,
+                    "lang": self.lang,
+                    "page_size": page_size,
+                    "page": page,
+                },
+            )
+            return (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def news(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/news",
+                params={
+                    "symbol": self.symbol,
+                    "lang": self.lang,
+                    "page_size": page_size,
+                    "page": page,
+                },
+            )
+            return (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data
+                else pd.DataFrame()
+            )
+        except Exception:
+            return pd.DataFrame()
+
+    def ratio_summary(self) -> pd.DataFrame:
+        try:
+            data = self._get(
+                "/company/ratio-summary",
+                params={"symbol": self.symbol, "lang": self.lang},
+            )
+            return (
+                pd.DataFrame([data])
+                if isinstance(data, dict) and data
+                else pd.DataFrame()
+            )
+        except Exception as e:
+            print(e)
+            return pd.DataFrame()
+
+
+class Company:
+    """
+    Public Company API (stable surface).
+
+    Only exposes:
+    - overview()
+    - profile()
+    - shareholders(page_size=50, page=0)
+    - officers(page_size=50, page=0)
+    - subsidiaries(page_size=100, page=0)
+    - events(page_size=15, page=0)
+    - news(page_size=15, page=0)
+    - ratio_summary()
+
+    Internally uses a provider so you can swap/add APIs later easily.
+    """
+
+    def __init__(
+        self,
+        symbol: str,
+        source: str = "BACKEND",
+        lang: str = "vi",
+        api_base: Optional[str] = None,
+    ):
+        self.symbol = str(symbol).upper().strip()
+        self.source = (source or "BACKEND").upper()
+        self.lang = lang or "vi"
+
+        if self.source in ("BACKEND", "API", "FASTAPI"):
+            self._provider = _BackendCompanyProvider(
+                self.symbol, lang=self.lang, api_base=api_base
+            )
+        elif self.source == "VCI":
+            self._provider: _CompanyProvider = _VCICompanyProvider(
+                self.symbol, lang=self.lang
+            )
+        elif self.source == "TCBS":
+            self._provider = _TCBSCompanyProvider(self.symbol)
+        elif self.source == "AUTO":
+            # Try BACKEND first; then VCI; if it fails, fallback to TCBS.
+            try:
+                self._provider = _BackendCompanyProvider(
+                    self.symbol, lang=self.lang, api_base=api_base
+                )
+                _ = self._provider.overview()
+            except Exception:
+                try:
+                    self._provider = _VCICompanyProvider(self.symbol, lang=self.lang)
+                    _ = self._provider.overview()
+                except Exception:
+                    self._provider = _TCBSCompanyProvider(self.symbol)
+        else:
+            raise ValueError("source must be one of: 'BACKEND', 'VCI', 'TCBS', 'AUTO'")
+
+    def overview(self) -> pd.DataFrame:
+        return self._provider.overview()
+
+    def profile(self) -> pd.DataFrame:
+        return self._provider.profile()
+
+    def shareholders(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
+        return self._provider.shareholders(page_size=page_size, page=page)
+
+    def officers(self, page_size: int = 50, page: int = 0) -> pd.DataFrame:
+        return self._provider.officers(page_size=page_size, page=page)
+
+    def subsidiaries(self, page_size: int = 100, page: int = 0) -> pd.DataFrame:
+        return self._provider.subsidiaries(page_size=page_size, page=page)
+
+    def events(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
+        return self._provider.events(page_size=page_size, page=page)
+
+    def news(self, page_size: int = 15, page: int = 0) -> pd.DataFrame:
+        return self._provider.news(page_size=page_size, page=page)
+
+    def ratio_summary(self) -> pd.DataFrame:
+        return self._provider.ratio_summary()
+
+
+# ===== VCI GraphQL Finance Ratio Query =====
+FINANCE_RATIO_QUERY = """
+fragment Ratios on CompanyFinancialRatio {
+  ticker
+  yearReport
+  lengthReport
+  updateDate
+  revenue
+  revenueGrowth
+  netProfit
+  netProfitGrowth
+  ebitMargin
+  roe
+  roic
+  roa
+  pe
+  pb
+  eps
+  currentRatio
+  cashRatio
+  quickRatio
+  interestCoverage
+  netProfitMargin
+  grossMargin
+  ev
+  issueShare
+  ps
+  pcf
+  bvps
+  evPerEbitda
+  charterCapital
+  dividend
+  ebitda
+  ebit
 }
-PERIOD_MAP = {"year": 1, "quarter": 0}
+
+query Query($ticker: String!, $period: String!) {
+  CompanyFinancialRatio(ticker: $ticker, period: $period) {
+    ratio {
+      ...Ratios
+    }
+    period
+  }
+}
+""".strip()
+
+
+class _FinanceProvider:
+    """Internal provider interface (do not use directly)."""
+
+    def ratio(
+        self, period: str = "Q", dropna: bool = False
+    ) -> pd.DataFrame:  # pragma: no cover
+        raise NotImplementedError
+
+
+def _normalize_finance_ratio_df(
+    df: pd.DataFrame, symbol: str, dropna: bool
+) -> pd.DataFrame:
+    """
+    Chuẩn hóa DataFrame tỷ số tài chính về cùng format như nguồn VCI:
+    - Đảm bảo có cột ticker
+    - yearReport/lengthReport -> year/quarter (nếu có)
+    - Áp dụng dropna (xóa cột toàn NaN) nếu cần.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+
+    # Best-effort rename cho các field phổ biến
+    rename_map = {}
+    if "yearReport" in out.columns:
+        rename_map["yearReport"] = "year"
+    if "lengthReport" in out.columns:
+        rename_map["lengthReport"] = "quarter"
+    if rename_map:
+        out = out.rename(columns=rename_map)
+
+    # Đảm bảo ticker tồn tại
+    if "ticker" not in out.columns:
+        out["ticker"] = symbol
+
+    if dropna:
+        out = out.dropna(axis=1, how="all")
+
+    return out
+
+
+class _VCIFinanceProvider(_FinanceProvider):
+    """Finance provider via VCI GraphQL API - only supports ratio()."""
+
+    def __init__(self, symbol: str, *, lang: str = "vi"):
+        self.symbol = str(symbol).upper().strip()
+        self.lang = lang or "vi"
+
+    def ratio(self, period: str = "Q", dropna: bool = False) -> pd.DataFrame:
+        """
+        Fetch financial ratios from VCI CompanyFinancialRatio API.
+
+        Args:
+            period: "Q" for quarter, "Y" for year (as in working test script)
+            dropna: drop all-empty columns
+        """
+        try:
+            data = _vci_graphql_request(
+                query=FINANCE_RATIO_QUERY,
+                variables={"ticker": self.symbol, "period": period},
+            )
+        except Exception:
+            # If VCI ratio endpoint fails, return empty DataFrame
+            return pd.DataFrame()
+
+        block = (data or {}).get("CompanyFinancialRatio") or {}
+        ratios = block.get("ratio") or []
+        if not isinstance(ratios, list) or not ratios:
+            return pd.DataFrame()
+
+        raw_df = pd.DataFrame(ratios)
+        return _normalize_finance_ratio_df(raw_df, self.symbol, dropna)
+
+
+class _BackendFinanceProvider(_FinanceProvider):
+    """Finance provider via backend FastAPI endpoints (/v1/finance/*)."""
+
+    def __init__(self, symbol: str, *, api_base: Optional[str] = None):
+        self.symbol = str(symbol).upper().strip()
+        self.api_base = api_base or LAMBDA_URL or ""
+
+    def _get(self, path: str, params: Optional[dict] = None):
+        if self.api_base:
+            base = self.api_base.rstrip("/")
+            url = f"{base}/{str(path).lstrip('/')}"
+            resp = requests.get(
+                url,
+                params=params or {},
+                timeout=_TIMEOUT,
+                headers=_backend_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+        return _backend_get_json(path, params=params, timeout=_TIMEOUT)
+
+    def ratio(self, period: str = "Q", dropna: bool = False) -> pd.DataFrame:
+        try:
+            per = (period or "Q").strip().upper()
+            data = self._get(
+                "/finance/ratio",
+                params={
+                    "symbol": self.symbol,
+                    "period": per,
+                    "dropna": int(bool(dropna)),
+                },
+            )
+            raw_df = (
+                pd.DataFrame(data)
+                if isinstance(data, list) and data
+                else pd.DataFrame()
+            )
+            return _normalize_finance_ratio_df(raw_df, self.symbol, dropna)
+        except Exception:
+            return pd.DataFrame()
 
 
 class Finance:
-    """Financial statements via TCBS."""
+    """
+    Public Finance API - Tỷ số tài chính từ VCI GraphQL API.
 
-    def __init__(self, symbol):
-        self.symbol = symbol
+    Chỉ hỗ trợ:
+    - ratio(period="Q" | "Y", dropna=False)    # Tỷ số tài chính từ VCI CompanyFinancialRatio
 
-    def _fetch(self, report, period="year", lang="vi", dropna=False):
-        BASE = "https://apipubaws.tcbs.com.vn"
-        ANALYSIS = "tcanalysis"
-        assert report in FIN_MAP, f"Invalid report: {report}"
-        url = f"{BASE}/{ANALYSIS}/v1/finance/{self.symbol}/{FIN_MAP[report]}"
-        params = {"period": PERIOD_MAP.get(period, 1), "size": 1000}
-        data = send_request(url, params=params)
-        df = pd.DataFrame(data)
-        if dropna:
-            df = df.dropna(axis=1, how="all")
-        return df
+    Args:
+        symbol: Mã cổ phiếu (VD: "HPG", "VIC")
+        source: Nguồn dữ liệu (chỉ hỗ trợ "VCI")
+        lang: Ngôn ngữ (mặc định "vi")
+    """
 
-    def income_statement(self, period="year", lang="vi", dropna=False):
-        return self._fetch("income_statement", period, lang, dropna)
+    def __init__(
+        self,
+        symbol: str,
+        source: str = "BACKEND",
+        lang: str = "vi",
+        api_base: Optional[str] = None,
+    ):
+        self.symbol = str(symbol).upper().strip()
+        self.source = (source or "BACKEND").upper()
+        self.lang = lang or "vi"
 
-    def balance_sheet(self, period="year", lang="vi", dropna=False):
-        return self._fetch("balance_sheet", period, lang, dropna)
+        if self.source in ("BACKEND", "API", "FASTAPI"):
+            self._provider = _BackendFinanceProvider(self.symbol, api_base=api_base)
+        elif self.source == "VCI":
+            self._provider = _VCIFinanceProvider(self.symbol, lang=self.lang)
+        else:
+            raise ValueError("source must be one of: 'BACKEND', 'VCI'")
 
-    def cash_flow(self, period="year", lang="vi", dropna=False):
-        return self._fetch("cash_flow", period, lang, dropna)
+    def ratio(self, period: str = "Q", dropna: bool = False) -> pd.DataFrame:
+        """
+        Tỷ số tài chính từ VCI CompanyFinancialRatio endpoint.
+
+        Args:
+            period: "Q" (quý) hoặc "Y" (năm)
+            dropna: Xóa các cột hoàn toàn trống
+
+        Returns:
+            DataFrame chứa các tỷ số tài chính như revenue, netProfit, roe, pe, pb, etc.
+        """
+        return self._provider.ratio(period=period, dropna=dropna)
 
 
 # ===================== Reorganized: Fund =====================
@@ -1199,7 +2153,7 @@ class Trading:
 # ===================== Public: get_hist =====================
 
 
-def get_hist(asset_name: str, resolution: str = "m") -> pd.DataFrame:
+def get_hist(asset_name: str, resolution: str = "1H") -> pd.DataFrame:
     """
     Lấy toàn bộ OHLCV từ Entrade API với pivot/fill logic để xử lý missing data.
 
@@ -1208,8 +2162,8 @@ def get_hist(asset_name: str, resolution: str = "m") -> pd.DataFrame:
     asset_name : str
         Mã cổ phiếu (ví dụ: "HPG", "VNM")
     resolution : str
-        Khung thời gian: "m" (1 phút), "h" (1 giờ), "1H", "1D", etc.
-        Mặc định: "m"
+        Khung thời gian: chỉ hỗ trợ "1H" (bắt buộc).
+        Mặc định: "1H"
 
     Returns:
     --------

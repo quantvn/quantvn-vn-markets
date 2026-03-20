@@ -2,13 +2,13 @@
 
 **QuantVN** là thư viện Python toàn diện cho phân tích định lượng và truy xuất dữ liệu tài chính, được tối ưu hóa đặc biệt cho thị trường tài chính Việt Nam và cryptocurrency.
 
-## Tính năng nổi bật
+##  Tính năng nổi bật
 
-**Hoàn toàn miễn phí & mã nguồn mở**: Dễ dàng truy cập và sử dụng cho cá nhân, nhà phân tích định lượng, và cộng đồng nghiên cứu.
+ **Hoàn toàn miễn phí & mã nguồn mở**: Dễ dàng truy cập và sử dụng cho cá nhân, nhà phân tích định lượng, và cộng đồng nghiên cứu.
 
-**Giải pháp Python toàn diện**: API đơn giản, dễ tích hợp vào hệ thống giao dịch tự động.
+ **Giải pháp Python toàn diện**: API đơn giản, dễ tích hợp vào hệ thống giao dịch tự động.
 
-**Dữ liệu thị trường**:
+ **Dữ liệu thị trường**:
 
 - Cổ phiếu Việt Nam (HOSE, HNX, UPCOM)
 - Phái sinh VN30
@@ -16,7 +16,6 @@
 **Công cụ phân tích mạnh mẽ**: Tích hợp sẵn các chỉ số hiệu suất, backtesting, và đánh giá rủi ro.
 
 ## Quy trình QuantVN
-
 Để xây dựng một hệ thống giao dịch thành công, QuantVN vận hành theo một quy trình 4 bước khép kín và logic.
 
 ![image](https://res.cloudinary.com/dbn4eimis/image/upload/v1773975369/image_1_pxtcuk.png)
@@ -51,10 +50,8 @@ pip install -e .
 
 Để sử dụng các tính năng của QuantVN , người dùng cần cung cấp API Key được cấp từ nền tảng **QuantVN** | https://quantvn.com/.
 
-<p align="center">
-  <img src="https://res.cloudinary.com/dbn4eimis/image/upload/v1773975781/Gemini_Generated_Image_r5fls6r5fls6r5fl_ktk5hx.png
-" alt="QuantVN" width="300"/>
-</p>
+
+![image](https://res.cloudinary.com/dbn4eimis/image/upload/v1773975781/Gemini_Generated_Image_r5fls6r5fls6r5fl_ktk5hx.png)
 
 <p align="center">
   <a href="https://quantvn.com/">
@@ -72,6 +69,8 @@ client(apikey="your_api_key_here")
 ```
 
 **Lưu ý**: Một số chức năng có thể hoạt động mà không cần API key, nhưng khuyến nghị có API key để truy cập đầy đủ.
+
+
 
 ---
 
@@ -171,9 +170,7 @@ ratios = company.ratio_summary()
 print("Tỷ số tài chính tổng hợp")
 print(ratios[["pe", "pb", "roe", "roa"]])
 ```
-
 **Output:**
-
 ```python
 Thông tin tổng quan
   symbol     id  issue_share     icb_name2     icb_name4
@@ -226,6 +223,7 @@ Tỷ số tài chính tổng hợp
 
 #### 1.4. Tỷ số tài chính
 
+
 ```python
 from quantvn import client
 client(apikey="your-apikey-here")
@@ -249,7 +247,6 @@ if not ratios_y.empty:
 ```
 
 **Output:**
-
 ```python
 Tỷ số tài chính theo quý:
    year  year  quarter  quarter         revenue      netProfit       roe         pe        pb
@@ -299,9 +296,7 @@ depth = quote.price_depth()
 print("Độ sâu thị trường (price depth)")
 print(depth.head())
 ```
-
 **Output:**
-
 ```python
 Dữ liệu lịch sử trong khoảng thời gian
         time      open      high       low     close    volume
@@ -328,6 +323,7 @@ Dữ liệu tick intraday
 4  23350.0  1214700.0       569600.0        645100.0                  0.0
 ```
 
+
 #### 1.6. Thông tin giao dịch
 
 ```python
@@ -337,10 +333,8 @@ from quantvn.vn.data import Trading
 price_board = Trading.price_board(["VCB", "ACB", "TCB"])
 print(price_board)
 ```
-
 **Output:**
-
-```python
+```python 
   symbol  open ceiling floor  ref_price  high   low  price_change  price_change_pct foreign_volume foreign_room foreign_holding_room avg_match_volume_2w
 0    VCB  None    None  None    60500.0  None  None       -1400.0         -2.314050           None         None                 None                None
 1    ACB  None    None  None    23750.0  None  None        -450.0         -1.894737           None         None                 None                None
@@ -372,9 +366,7 @@ search_result = fund.filter("RVPIF")
 print("Tìm kiếm quỹ theo tên")
 print(search_result)
 ```
-
 **Output:**
-
 ```python
 Danh sách tất cả quỹ
    id                                              name shortName   code  ... productNavChange.updateAt extra.lastNAVDate extra.lastNAV  extra.currentNAV
@@ -410,9 +402,7 @@ print(f"HOSE: {len(symbols['HOSE'])} symbols")
 print(f"HNX: {len(symbols['HNX'])} symbols")
 print(f"UPCOM: {len(symbols['UPCOM'])} symbols")
 ```
-
 **Output:**
-
 ```python
 HOSE: 3 symbols
 HNX: 0 symbols
@@ -477,6 +467,8 @@ Dữ liệu VN30F1M theo 15 phút
 
 ---
 
+
+
 ---
 
 ### 3. Technical Analysis & Fundamental Features
@@ -496,19 +488,17 @@ df_with_ta = add_all_ta_features(df)
 print(df_with_ta.columns)
 print(df_with_ta.head())
 ```
-
 **Output:**
-
-```python
-['Date', 'time', 'Open', 'High', 'Low', 'Close', 'volume', 'volume_adi', 'volume_obv', 'volume_cmf',...'sma_fast', 'sma_slow', 'ema_fast',
+```python 
+['Date', 'time', 'Open', 'High', 'Low', 'Close', 'volume', 'volume_adi', 'volume_obv', 'volume_cmf',...'sma_fast', 'sma_slow', 'ema_fast', 
 'ema_slow', 'bb_middle', 'bb_high','bb_low', 'bb_width', 'bb_percent', 'atr']
 
 Date      time   Open   High    Low  Close     volume  ...   ema_slow  bb_middle    bb_high     bb_low  bb_width  bb_percent  atr
-0  2023-03-20  09:00:00  26.50  26.60  26.20  26.30   188600.0  ...  26.300000    26.3000  26.300000  26.300000  0.000000    0.000000  0.0
-1  2023-03-20  10:00:00  26.25  26.40  26.00  26.10   319300.0  ...  26.285185    26.2000  26.400000  26.000000  1.526718    0.250000  0.0
-2  2023-03-20  11:00:00  26.05  26.10  25.85  25.90   294700.0  ...  26.256653    26.1000  26.426599  25.773401  2.502672    0.193814  0.0
-3  2023-03-20  13:00:00  25.90  25.95  25.70  25.75   928800.0  ...  26.219123    26.0125  26.427078  25.597922  3.187530    0.183413  0.0
-4  2023-03-20  14:00:00  25.80  26.40  25.70  26.40  1630900.0  ...  26.232521    26.0900  26.573322  25.606678  3.705035    0.820697  0.0
+0  2023-03-20  09:00:00  26.50  26.60  26.20  26.30   188600.0  ...  26.300000    26.3000  26.300000  26.300000  0.000000    0.000000  0.0   
+1  2023-03-20  10:00:00  26.25  26.40  26.00  26.10   319300.0  ...  26.285185    26.2000  26.400000  26.000000  1.526718    0.250000  0.0   
+2  2023-03-20  11:00:00  26.05  26.10  25.85  25.90   294700.0  ...  26.256653    26.1000  26.426599  25.773401  2.502672    0.193814  0.0   
+3  2023-03-20  13:00:00  25.90  25.95  25.70  25.75   928800.0  ...  26.219123    26.0125  26.427078  25.597922  3.187530    0.183413  0.0   
+4  2023-03-20  14:00:00  25.80  26.40  25.70  26.40  1630900.0  ...  26.232521    26.0900  26.573322  25.606678  3.705035    0.820697  0.0 
 ```
 
 #### 3.2. Thêm chỉ số tài chính cơ bản
@@ -525,9 +515,7 @@ df_with_fund = add_all_fund_features(df, symbol="HPG")
 print(df_with_fund.columns)
 print(df_with_fund.head())
 ```
-
 **Output:**
-
 ```python
 ['Date', 'time', 'Open', 'High', 'Low', 'Close', 'volume', 'ticker','year', 'quarter']
 
@@ -552,9 +540,7 @@ roe_data = fund_feature("roe", "VCB")
 print(roe_data.head())
 
 ```
-
 **Output:**
-
 ```python
          Date      time   Open   High    Low  Close    Volume  roe
 0  2023-03-20  09:00:00  50.04  50.32  49.77  50.04  189400.0  NaN
@@ -619,9 +605,7 @@ print(f"Minimum capital needed: {min_capital:,.0f} VND")
 # Vẽ biểu đồ PnL
 backtest.plot_PNL("VN30F1M - MA Crossover Strategy")
 ```
-
 **Output**
-
 ```python
            Date      time   Open   High    Low  Close  volume            Datetime  ma_short  ma_long  position
 100  2018-08-15  09:10:00  959.3  960.5  959.3  960.4   927.0 2018-08-15 09:10:00   958.645  956.424         1
@@ -673,9 +657,7 @@ print(pnl.iloc[100:105])
 # Vẽ PnL
 backtest.plot_PNL("VIC - MA(20/50) Strategy")
 ```
-
 **Output:**
-
 ```python
            Date      time   Open   High    Low  Close    volume     ma20    ma50  position
 100  2023-04-17  09:00:00  26.45  26.50  26.25  26.25  196700.0  26.4800  27.264         0
@@ -724,9 +706,7 @@ print(f"Risk of Ruin: {metrics.risk_of_ruin():.4f}")
 var_95 = metrics.value_at_risk(confidence_level=0.95)
 print(f"VaR (95%): {var_95:,.0f} VND")
 ```
-
 **Output:**
-
 ```python
 Sharpe Ratio: 0.019
 Sortino Ratio: 0.024
@@ -755,16 +735,16 @@ VaR (95%): 25 VND
 - `value_at_risk(confidence_level)`: Value at Risk
 - `risk_of_ruin()`: Xác suất phá sản
 
+
 ---
 
-## Ví dụ thực tế
-
+##  Ví dụ thực tế
 Xem cách triển khai và chạy trực tiếp trên Google Colab:
 https://colab.research.google.com/drive/1pEVYivKMNwRVxERy4mb9ujzoHrh7avJL?usp=sharing
 
 ---
 
-## Testing
+##  Testing
 
 Chạy tests:
 
@@ -781,7 +761,7 @@ pytest --cov=quantvn tests/
 
 ---
 
-## Đóng góp
+##  Đóng góp
 
 Chúng tôi hoan nghênh mọi đóng góp! Để đóng góp:
 
@@ -795,7 +775,7 @@ Vui lòng đọc [CONTRIBUTING.md](CONTRIBUTING.md) để biết thêm chi tiế
 
 ---
 
-## Tuyên bố miễn trách nhiệm
+##  Tuyên bố miễn trách nhiệm
 
 **QuantVN** được phát triển nhằm phục vụ mục đích nghiên cứu và học tập.
 
@@ -811,13 +791,13 @@ Vui lòng đọc [CONTRIBUTING.md](CONTRIBUTING.md) để biết thêm chi tiế
 
 ---
 
-## Giấy phép
+##  Giấy phép
 
 Dự án này được phát hành theo giấy phép **MIT License**. Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
 
 ---
 
-## Changelog
+##  Changelog
 
 ### Version 0.1.5
 

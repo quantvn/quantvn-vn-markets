@@ -111,7 +111,12 @@ def merge_fund_into_price(
         if c in (ticker_col, year_col, quarter_col):
             continue
         if not pd.api.types.is_numeric_dtype(f[c]):
-            f[c] = pd.to_numeric(f[c], errors="ignore")
+            # pandas >= 2.2 deprecates errors="ignore"
+            try:
+                f[c] = pd.to_numeric(f[c], errors="raise")
+            except Exception:
+                # keep original if non-numeric (e.g., strings / mixed types)
+                pass
 
     # 4) Ngày hiệu lực báo cáo
     f["report_date"] = [
@@ -1093,6 +1098,7 @@ def _auto_get(symbol: str, *, timeframe: str = "h", force_refresh: bool = False)
             "Cần quantvn: `pip install quantvn` và khởi tạo client(apikey=...)"
         ) from e
     df_raw = Company(symbol).ratio_summary()
+    print(df_raw.head())
     if "ticker" not in df_raw.columns:
         df_raw = df_raw.copy()
         df_raw["ticker"] = symbol
@@ -1140,6 +1146,8 @@ def fund_feature(
     if not isinstance(feature_name, str):
         raise TypeError("feature_name phải là str")
 
+    requested_feature_name = feature_name
+
     price_df, fund_df = _get_fund_frame_for_feature(
         symbol, timeframe, feature_name, force_refresh=force_refresh
     )
@@ -1157,12 +1165,68 @@ def fund_feature(
         drop_all_nan_cols=True,
     )
 
+    # --- feature aliasing / fallback computations ---
+    # 1) case-insensitive exact match
     if feature_name not in merged.columns:
-        raise KeyError(f"Không tìm thấy feature '{feature_name}' sau khi merge.")
+        lower_map = {str(c).lower(): c for c in merged.columns}
+        hit = lower_map.get(feature_name.lower())
+        if hit is not None:
+            feature_name = hit
+
+    # 2) common aliases (extend as needed)
+    if feature_name not in merged.columns:
+        alias_map = {
+            # P/E
+            "pricetoearning": ["pe", "p_e", "p/e", "priceToEarningTTM", "peRatio"],
+            "pe": ["priceToEarning", "priceToEarningTTM", "peRatio"],
+        }
+        key = feature_name.replace("_", "").replace("/", "").lower()
+        for cand in alias_map.get(key, []):
+            if cand in merged.columns:
+                feature_name = cand
+                break
+            hit = lower_map.get(str(cand).lower())
+            if hit is not None:
+                feature_name = hit
+                break
+
+    # 3) compute P/E from Close / EPS when user asked priceToEarning
+    if feature_name not in merged.columns:
+        requested_key = feature_name.replace("_", "").replace("/", "").lower()
+        if requested_key in ("pricetoearning", "pe"):
+            eps_col = None
+            for c in ("earningPerShare", "eps", "EPS"):
+                if c in merged.columns:
+                    eps_col = c
+                    break
+                hit = lower_map.get(str(c).lower())
+                if hit is not None:
+                    eps_col = hit
+                    break
+            if eps_col is not None and "Close" in merged.columns:
+                merged["priceToEarning"] = merged["Close"] / merged[eps_col].replace(
+                    {0: np.nan}
+                )
+                feature_name = "priceToEarning"
+
+    if feature_name not in merged.columns:
+        import difflib
+
+        cols = [c for c in merged.columns if isinstance(c, str)]
+        suggestions = difflib.get_close_matches(feature_name, cols, n=8, cutoff=0.5)
+        sug_txt = f" Gợi ý: {suggestions}" if suggestions else ""
+        raise KeyError(
+            f"Không tìm thấy feature '{feature_name}' sau khi merge.{sug_txt}"
+        )
 
     out = merged[
         ["Date", "time", "Open", "High", "Low", "Close", "Volume", feature_name]
     ].copy()
+
+    # If user requested a name that was mapped to another column, keep API stable
+    if feature_name != requested_feature_name:
+        out = out.rename(columns={feature_name: requested_feature_name})
+        feature_name = requested_feature_name
 
     out = out.sort_values(["Date", "time"], kind="mergesort").reset_index(drop=True)
     return out[["Date", "time", "Open", "High", "Low", "Close", "Volume", feature_name]]

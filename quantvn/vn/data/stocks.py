@@ -1985,6 +1985,51 @@ def _chart_yahoo(
     return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
 
 
+def _chart_dukascopy(symbol: str, start=None, end=None, interval="1d"):
+
+    api_key = Config.get_api_key()
+
+    interval = interval.lower().strip()
+
+    if interval not in ["1m", "3m", "5m", "15m", "30m", "1h", "1d"]:
+        return None
+
+    parameters = {"instrument": symbol.lower().strip(), "timeframe": interval}
+
+    start = pd.to_datetime(start)
+    parameters["from_date"] = start
+
+    end = pd.to_datetime(end)
+    parameters["to_date"] = end
+
+    headers = {
+        "x-api-key": api_key,
+        "Accept-Encoding": "gzip",
+        "Accept": "application/octet-stream",
+    }
+
+    for attempt in range(3):
+        response = requests.get(
+            f"{LAMBDA_URL}/dukascopy/candles",
+            params=parameters,
+            headers=headers,
+        )
+
+        if response.status_code == 200:
+            buffer = io.BytesIO(response.content)
+            df = pd.read_parquet(buffer)
+            df.index = pd.to_datetime(df["timestamp"], unit="ms")
+            df = df.drop(columns=["timestamp"])
+            df.index.name = "time"
+            df = df.reset_index()
+
+            return df
+        elif 400 <= response.status_code < 500:
+            break
+
+    return None
+
+
 class _Wrap:
     def __init__(self, id_map, kind: str):
         self.id_map = id_map
@@ -1998,11 +2043,15 @@ class _Wrap:
 
         def history(self, start, end, interval="1D"):
             try:
+                df = _chart_dukascopy(self.raw_symbol, start, end, interval)
+                if df is not None and not df.empty:
+                    return df
+
                 df = _chart_msn(self.sid, start, end, interval)
                 if df is not None and not df.empty:
                     return df
             except Exception:
-                pass
+                raise Exception
             return _chart_yahoo(self.kind, self.raw_symbol, start, end, interval)
 
     def __call__(self, symbol):

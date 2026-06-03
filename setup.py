@@ -5,12 +5,13 @@ setup(
     version="0.1.22",
     packages=find_packages(),
     install_requires=[
+        "numpy",
         "requests",
         "pandas",
         "matplotlib",
         "tqdm",
         "ta",
-        "pyarrow"
+        "pyarrow",
     ],
     author="quantvn",
     description="QuantVN API Library for Financial Data Analysis",

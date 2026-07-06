@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Union
 
 import pandas as pd
-from tqdm import tqdm
 
-from quantvn.crypto.data.download import download_monthly, extract_csv
+from quantvn.crypto.data.download import VALID_INTERVALS, download_monthly, extract_csv
 
 __all__ = ["get_hist"]
+
+VN_TZ = timezone(timedelta(hours=7))
 
 
 def get_hist(
@@ -18,73 +20,66 @@ def get_hist(
     cache_dir: Optional[Union[str, Path]] = None,
 ) -> pd.DataFrame:
     """
-    Fetch historical monthly data from Binance.
+    Fetch historical OHLCV data from Binance Vision (spot), 2019-07 to 2022-12.
 
-    start/end: str in "YYYY-MM-DD HH:MM:SS" format or datetime, in Vietnam time (UTC+7)
-    Returns DataFrame in format:
-    ["Date","time","Open","High","Low","Close","volume"]
+    Args:
+        symbol:    Binance symbol, e.g. "BTCUSDT"
+        interval:  Candle interval. Valid values: 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w 1M
+        cache_dir: Local cache directory (default: ~/.cache/quantvn)
+
+    Returns:
+        DataFrame with columns [Datetime, Date, time, Open, High, Low, Close, volume]
     """
-    cache_dir = Path(cache_dir or Path.home() / ".cache/quantvn")
-    VN_TZ = timezone(timedelta(hours=7))
+    if interval not in VALID_INTERVALS:
+        raise ValueError(
+            f"Invalid interval {interval!r}. "
+            f"Choose one of: {', '.join(VALID_INTERVALS)}"
+        )
 
-    # default start/end
+    cache_dir = Path(cache_dir or Path.home() / ".cache/quantvn")
+
     start_dt = datetime(2019, 7, 1, tzinfo=VN_TZ)
     end_dt = datetime(2022, 12, 31, 23, 59, 59, tzinfo=VN_TZ)
 
-    # parse if string
-    if isinstance(start_dt, str):
-        start_dt = datetime.strptime(start_dt, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=VN_TZ
-        )
-    if isinstance(end_dt, str):
-        end_dt = datetime.strptime(end_dt, "%Y-%m-%d %H:%M:%S").replace(tzinfo=VN_TZ)
-
-    # generate list of months
+    # generate list of months to download
     months = []
-    dt = start_dt.replace(day=1)
+    dt = start_dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     while dt <= end_dt:
         months.append(dt.strftime("%Y-%m"))
-        if dt.month == 12:
-            dt = dt.replace(year=dt.year + 1, month=1)
-        else:
-            dt = dt.replace(month=dt.month + 1)
+        dt = dt.replace(month=dt.month + 1) if dt.month < 12 else dt.replace(year=dt.year + 1, month=1)
 
-    all_dfs = []
-    for m in tqdm(months, desc=f"Downloading {symbol}", disable=True):
-        try:
-            zip_path = download_monthly(symbol, interval, m, cache_dir)
-            df = extract_csv(zip_path)
-            all_dfs.append(df)
-        except Exception as e:
-            print(f"Skip {symbol} {interval} {m}: {e}")
+    # parallel download
+    results: dict[str, pd.DataFrame] = {}
 
-    if not all_dfs:
-        return pd.DataFrame(
-            columns=["Date", "time", "Open", "High", "Low", "Close", "volume"]
-        )
+    def _fetch(month: str):
+        zip_path = download_monthly(symbol, interval, month, cache_dir)
+        return month, extract_csv(zip_path)
 
-    # concat all months
-    df_all = pd.concat(all_dfs, ignore_index=True)
-    df_all = (
-        df_all.drop_duplicates(subset=["t"]).sort_values("t").reset_index(drop=True)
-    )
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_fetch, m): m for m in months}
+        for future in as_completed(futures):
+            month = futures[future]
+            try:
+                m, df = future.result()
+                results[m] = df
+            except Exception as e:
+                print(f"Skip {symbol} {interval} {month}: {e}")
 
-    # convert timestamp t -> Asia/Ho_Chi_Minh
+    if not results:
+        return pd.DataFrame(columns=["Datetime", "Date", "time", "Open", "High", "Low", "Close", "volume"])
+
+    df_all = pd.concat([results[m] for m in sorted(results)], ignore_index=True)
+    df_all = df_all.drop_duplicates(subset=["t"]).sort_values("t").reset_index(drop=True)
+
     df_all["t"] = pd.to_datetime(df_all["t"], unit="ms", errors="coerce", utc=True)
     df_all = df_all.dropna(subset=["t"])
     df_all["t"] = df_all["t"].dt.tz_convert(VN_TZ)
 
-    # filter by start/end datetime
     df_all = df_all[(df_all["t"] >= start_dt) & (df_all["t"] <= end_dt)]
 
-    # rename Volume -> volume
     df_all.rename(columns={"Volume": "volume"}, inplace=True)
-
-    # tạo cột Date + time
     df_all["Date"] = df_all["t"].dt.strftime("%Y-%m-%d")
     df_all["time"] = df_all["t"].dt.strftime("%H:%M:%S")
     df_all["Datetime"] = df_all["t"]
 
-    return df_all[
-        ["Datetime", "Date", "time", "Open", "High", "Low", "Close", "volume"]
-    ]
+    return df_all[["Datetime", "Date", "time", "Open", "High", "Low", "Close", "volume"]].reset_index(drop=True)

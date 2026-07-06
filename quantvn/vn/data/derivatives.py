@@ -7,10 +7,8 @@ import requests
 
 from .utils import Config
 
-# Định nghĩa các thành phần public của module
 __all__ = ["get_hist"]
 
-# Lấy URL của Lambda function từ Config
 LAMBDA_URL = Config.get_link()
 
 
@@ -57,15 +55,11 @@ def get_hist(symbol: str, frequency: str):
         if isinstance(data, dict) and "base64" in data:
             try:
                 decoded_data = base64.b64decode(data["base64"])
-
                 with gzip.GzipFile(fileobj=io.BytesIO(decoded_data), mode="rb") as gz:
                     extracted_content = gz.read().decode("utf-8")
                     df = pd.read_csv(io.StringIO(extracted_content), index_col=0)
-
                 df["Datetime"] = pd.to_datetime(df["Date"] + " " + df["time"])
-
                 return df
-
             except Exception as e:
                 return {"error": f"Failed to process base64 data: {str(e)}"}
 

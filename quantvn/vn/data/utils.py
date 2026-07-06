@@ -53,6 +53,11 @@ class Config:
         """Return the API base URL for stock data."""
         return "https://be-stock.quantvn.com"
 
+    @classmethod
+    def get_link_us_stock_url(cls) -> str:
+        """Return the API base URL for US stock data."""
+        return "https://d207hp2u5nyjgn.cloudfront.net"
+
 def client(apikey: str):
     """
     Convenience function to set the API key.

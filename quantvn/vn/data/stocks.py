@@ -1835,6 +1835,7 @@ CRYPTO_ID = {
 INDICES_ID = {
     "DJI": "a6qja2",
     "INX": "a33k6h",
+    "SPX": "a33k6h",  # alias for S&P 500
     "COMP": "a3oxnm",
     "N225": "a9j7bh",
     "VNI": "aqk2nm",
@@ -1842,6 +1843,7 @@ INDICES_ID = {
 Y_INDICES = {
     "DJI": "^DJI",
     "INX": "^GSPC",
+    "SPX": "^GSPC",  # alias for S&P 500
     "COMP": "^IXIC",
     "N225": "^N225",
     "VNI": "^VNINDEX",
@@ -1862,13 +1864,37 @@ def _normalize_df_global(df: pd.DataFrame) -> pd.DataFrame:
     return df[["time", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
 
 
+# Public apikey used by the msn.com/money frontend for anonymous chart calls.
+# Override via the MSN_APIKEY env var if Microsoft rotates it.
+MSN_APIKEY = os.getenv("MSN_APIKEY", "0QfOX3Vn51YCzitbLaRkTTBadtWpgTN8NZLW0C1SEM")
+# MSN returns large negative placeholders (-99999901, -99999902, ...) for
+# missing data points; treat anything at/below this threshold as missing.
+_MSN_SENTINEL = -99999900.0
+
+
+def _msn_iso(value, default):
+    if value is None:
+        return default
+    return pd.to_datetime(value).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
 def _chart_msn(symbol_id, start=None, end=None, interval="1D") -> pd.DataFrame:
+    empty = pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
+    if not symbol_id:
+        return empty
     BASE = "https://assets.msn.com/service/Finance"
     url = f"{BASE}/Charts/TimeRange"
+    now = pd.Timestamp.utcnow()
     params = {
+        "apikey": MSN_APIKEY,
         "ids": symbol_id,
         "type": "All",
         "timeframe": 1,
+        # StartTime/EndTime are REQUIRED now; missing them returns HTTP 400.
+        "StartTime": _msn_iso(
+            start, (now - pd.Timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        ),
+        "EndTime": _msn_iso(end, now.strftime("%Y-%m-%dT%H:%M:%S.000Z")),
         "wrapodata": "false",
         "ocid": "finance-utils-peregrine",
         "cm": "en-us",
@@ -1878,40 +1904,39 @@ def _chart_msn(symbol_id, start=None, end=None, interval="1D") -> pd.DataFrame:
     data = send_request(url, params=params, headers=MSN_HEADERS)
     series = None
     if isinstance(data, list) and data and isinstance(data[0], dict):
-        series = data[0].get("series") or (
-            data[0].get("charts", [{}])[0].get("series")
-            if data[0].get("charts")
-            else None
-        )
+        series = data[0].get("series")
     elif isinstance(data, dict):
-        series = data.get("series") or (
-            data.get("charts", [{}])[0].get("series") if data.get("charts") else None
-        )
-    if not series:
-        return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
-    if isinstance(series, list):
-        df = pd.DataFrame(series)
-    else:
-        df = pd.DataFrame([series])
-    rename = {
-        "timeStamps": "time",
-        "openPrices": "open",
-        "pricesHigh": "high",
-        "pricesLow": "low",
-        "prices": "close",
-        "volumes": "volume",
-    }
-    df.rename(
-        columns={k: v for k, v in rename.items() if k in df.columns}, inplace=True
+        series = data.get("series")
+    if not isinstance(series, dict):
+        return empty
+    # MSN returns parallel arrays keyed by field; timeStamps drives the length.
+    times = series.get("timeStamps") or []
+    n = len(times)
+    if not n:
+        return empty
+
+    def _col(key):
+        vals = series.get(key)
+        return vals if isinstance(vals, list) and len(vals) == n else [None] * n
+
+    df = pd.DataFrame(
+        {
+            "time": times,
+            "open": _col("openPrices"),
+            "high": _col("pricesHigh"),
+            "low": _col("pricesLow"),
+            "close": _col("prices"),
+            "volume": _col("volumes"),
+        }
     )
-    for col in ["time", "open", "high", "low", "close", "volume"]:
-        if (
-            col in df.columns
-            and df[col].apply(lambda x: isinstance(x, (list, tuple))).any()
-        ):
-            df = df.explode(col)
-    df["time"] = pd.to_numeric(df.get("time"), errors="coerce")
-    df["time"] = pd.to_datetime(df["time"], unit="s", errors="coerce")
+    # timeStamps are ISO strings (e.g. "2024-01-01T00:00:00Z"), not unix seconds.
+    df["time"] = pd.to_datetime(df["time"], errors="coerce", utc=True).dt.tz_localize(
+        None
+    )
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = df[col].where(df[col] > _MSN_SENTINEL)
+    df = df.dropna(subset=["time", "close"]).reset_index(drop=True)
     return _normalize_df_global(df)
 
 
@@ -1986,6 +2011,24 @@ def _chart_yahoo(
     return pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
 
 
+def _chart_backend(kind, symbol, start, end=None, interval="1D") -> pd.DataFrame:
+    """Global quote history via the quantvn backend (/global/{kind}/{symbol}/history).
+
+    The backend holds the MSN apikey server-side; requires Config.set_api_key().
+    """
+    cols = ["time", "open", "high", "low", "close", "volume"]
+    params = {"start": start, "interval": interval}
+    if end:
+        params["end"] = end
+    data = _backend_get_json(f"global/{kind}/{symbol}/history", params=params)
+    if not isinstance(data, list) or not data:
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(data)
+    if "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+    return _normalize_df_global(df)
+
+
 class _Wrap:
     def __init__(self, id_map, kind: str):
         self.id_map = id_map
@@ -1998,12 +2041,21 @@ class _Wrap:
             self.raw_symbol = raw_symbol
 
         def history(self, start, end, interval="1D"):
+            # 1) Prefer the backend (MSN apikey is centralized server-side).
+            try:
+                df = _chart_backend(self.kind, self.raw_symbol, start, end, interval)
+                if df is not None and not df.empty:
+                    return df
+            except Exception:
+                pass
+            # 2) Direct MSN (works standalone without an api key).
             try:
                 df = _chart_msn(self.sid, start, end, interval)
                 if df is not None and not df.empty:
                     return df
             except Exception:
                 pass
+            # 3) Yahoo Finance fallback.
             return _chart_yahoo(self.kind, self.raw_symbol, start, end, interval)
 
     def __call__(self, symbol):
@@ -2178,6 +2230,7 @@ def get_hist(symbol: str, resolution: str = "1H"):
         "h": "1h",
         "1h": "1h",
     }
+
     freq = str(resolution or "").lower()
     interval_mapped = res_map.get(freq)
     if not interval_mapped:

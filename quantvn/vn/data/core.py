@@ -88,10 +88,16 @@ def merge_fund_into_price(
     # 1) dt ở bảng giá
     if price_time_col in out.columns and price_time_col is not None:
         out["dt"] = pd.to_datetime(
-            out[price_date_col].astype(str) + " " + out[price_time_col].astype(str)
+            out[price_date_col].astype(str) + " " + out[price_time_col].astype(str),
+            errors='coerce'  
         )
     else:
         out["dt"] = pd.to_datetime(out[price_date_col])
+    
+    # Tạo cột year + quarter cho OHLC để map đúng chu kỳ
+    # Tạo cột year + quarter từ cột dt
+    out['year'] = out["dt"].dt.year
+    out['quarter'] = out["dt"].dt.quarter
 
     # 2) ticker ở bảng giá (nếu thiếu)
     if ticker_col not in out.columns:
@@ -111,7 +117,7 @@ def merge_fund_into_price(
         if c in (ticker_col, year_col, quarter_col):
             continue
         if not pd.api.types.is_numeric_dtype(f[c]):
-            f[c] = pd.to_numeric(f[c], errors="ignore")
+            f[c] = pd.to_numeric(f[c], errors="coerce")
 
     # 4) Ngày hiệu lực báo cáo
     f["report_date"] = [
@@ -137,15 +143,16 @@ def merge_fund_into_price(
     )
     left = out.sort_values([ticker_col, "dt"])
 
+        
+    # Xử lý cột trùng lặp (fund_df có thể có 2 cột year/quarter)
+    f = f.loc[:, ~f.columns.duplicated()]
+
     # 6) merge_asof theo ticker
-    merged = pd.merge_asof(
-        left,
-        right,
-        left_on="dt",
-        right_on="effective_date",
-        by=ticker_col,
-        direction="backward",
-        allow_exact_matches=True,
+    merged = pd.merge(
+        out,
+        f,
+        on=[ticker_col, 'year', 'quarter'],
+        how='left'
     )
 
     # 7) Dọn cột phụ
@@ -1039,6 +1046,23 @@ def add_all_fund_features(
         drop_nan_threshold=drop_nan_threshold,
         cast_binary_to_int=cast_binary_to_int,
     )
+        # Fetch finance data khi có symbol
+    if symbol is not None:
+        from . import stocks
+
+        finance_df = stocks.Finance(symbol).ratio(period="Q")
+
+        finance_df = finance_df.loc[:, ~finance_df.columns.duplicated()]
+        
+        merged = pd.merge(
+            out,
+            finance_df,
+            on=[ticker_col, year_col, quarter_col],
+            how="left",
+            suffixes=("", "_ratio"),
+        )
+        return merged
+    
     return out
 
 
@@ -1092,7 +1116,12 @@ def _auto_get(symbol: str, *, timeframe: str = "h", force_refresh: bool = False)
         raise ImportError(
             "Cần quantvn: `pip install quantvn` và khởi tạo client(apikey=...)"
         ) from e
-    df_raw = Company(symbol).ratio_summary()
+
+    from . import stocks
+
+    df_raw = stocks.Finance(symbol).ratio(period="Q")
+    df_raw = df_raw.loc[:, ~df_raw.columns.duplicated()]
+    
     if "ticker" not in df_raw.columns:
         df_raw = df_raw.copy()
         df_raw["ticker"] = symbol

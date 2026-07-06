@@ -51,7 +51,7 @@ _MAX_REQUESTS = 2000  # giới hạn an toàn số lần phân trang
 
 # Giữ cho API cũ list_liquid_asset (nếu bạn dùng ở nơi khác)
 LAMBDA_URL = Config.get_link()
-STOCK_URL = Config.get_link_stock_url()
+QUANTVN_URL = Config.get_link_quantvn_data()
 
 
 def _backend_headers() -> Dict[str, str]:
@@ -1438,6 +1438,101 @@ class _BackendFinanceProvider(_FinanceProvider):
         except Exception:
             return pd.DataFrame()
 
+    def balance_sheet(self, period: str = "Q", dropna: bool = False) -> pd.DataFrame:
+        """
+        Get balance sheet data.
+
+        Args:
+            period: "q" for quarterly or "y" for yearly
+            dropna: drop all-empty columns
+
+        Returns:
+            pd.DataFrame: Balance sheet data
+        """
+        period = str(period).lower().strip()
+        if period not in ("q", "y"):
+            raise ValueError("period must be 'q' (quarterly) or 'y' (yearly).")
+
+        api_key = Config.get_api_key()
+        payload = {"symbol": self.symbol, "interval": period}
+
+        response = requests.post(
+            f"{QUANTVN_URL}/vn/finance/balance-sheet",
+            json=payload,
+            headers={"x-api-key": api_key},
+        )
+
+        if response.status_code == 200:
+            df = pd.read_parquet(io.BytesIO(response.content))
+            if dropna:
+                df = df.dropna(axis=1, how="all")
+            return df
+        else:
+            raise Exception(f"Error: {response.status_code}, {response.text}")
+
+    def income_statement(self, period: str = "Q", dropna: bool = False) -> pd.DataFrame:
+        """
+        Get income statement data.
+
+        Args:
+            period: "q" for quarterly or "y" for yearly
+            dropna: drop all-empty columns
+
+        Returns:
+            pd.DataFrame: Income statement data
+        """
+        period = str(period).lower().strip()
+        if period not in ("q", "y"):
+            raise ValueError("period must be 'q' (quarterly) or 'y' (yearly).")
+
+        api_key = Config.get_api_key()
+        payload = {"symbol": self.symbol, "interval": period}
+
+        response = requests.post(
+            f"{QUANTVN_URL}/vn/finance/income-statement",
+            json=payload,
+            headers={"x-api-key": api_key},
+        )
+
+        if response.status_code == 200:
+            df = pd.read_parquet(io.BytesIO(response.content))
+            if dropna:
+                df = df.dropna(axis=1, how="all")
+            return df
+        else:
+            raise Exception(f"Error: {response.status_code}, {response.text}")
+
+    def cash_flow(self, period: str = "Q", dropna: bool = False) -> pd.DataFrame:
+        """
+        Get cash flow data.
+
+        Args:
+            period: "q" for quarterly or "y" for yearly
+            dropna: drop all-empty columns
+
+        Returns:
+            pd.DataFrame: Cash flow data
+        """
+        period = str(period).lower().strip()
+        if period not in ("q", "y"):
+            raise ValueError("period must be 'q' (quarterly) or 'y' (yearly).")
+
+        api_key = Config.get_api_key()
+        payload = {"symbol": self.symbol, "interval": period}
+
+        response = requests.post(
+            f"{QUANTVN_URL}/vn/finance/cash-flow",
+            json=payload,
+            headers={"x-api-key": api_key},
+        )
+
+        if response.status_code == 200:
+            df = pd.read_parquet(io.BytesIO(response.content))
+            if dropna:
+                df = df.dropna(axis=1, how="all")
+            return df
+        else:
+            raise Exception(f"Error: {response.status_code}, {response.text}")
 
 class Finance:
     """
@@ -1482,6 +1577,15 @@ class Finance:
             DataFrame chứa các tỷ số tài chính như revenue, netProfit, roe, pe, pb, etc.
         """
         return self._provider.ratio(period=period, dropna=dropna)
+
+    def balance_sheet(self, period: str = "q", dropna: bool = False) -> pd.DataFrame:
+        return self._provider.balance_sheet(period=period, dropna=dropna)
+    
+    def income_statement(self, period: str = "q", dropna: bool = False) -> pd.DataFrame:
+        return self._provider.income_statement(period=period, dropna=dropna)
+    
+    def cash_flow(self, period: str = "q", dropna: bool = False) -> pd.DataFrame:
+        return self._provider.cash_flow(period=period, dropna=dropna)
 
 
 # ===================== Reorganized: Fund =====================
@@ -2229,18 +2333,20 @@ def get_hist(symbol: str, resolution: str = "1H"):
         "15m": "15m",
         "h": "1h",
         "1h": "1h",
+        "d": "1d",
+        "1d": "1d",
     }
 
     freq = str(resolution or "").lower()
     interval_mapped = res_map.get(freq)
     if not interval_mapped:
-        raise ValueError("resolution must be one of: '15m', '1h'.")
+        raise ValueError("resolution must be one of: '15m', '1h', '1d'.")
 
     api_key = Config.get_api_key()
     payload = {"symbol": sym, "interval": interval_mapped}
 
     response = requests.post(
-        f"{STOCK_URL}/stock/historical",
+        f"{QUANTVN_URL}/vn/stock/stock-historical",
         json=payload,
         headers={"x-api-key": api_key},
     )

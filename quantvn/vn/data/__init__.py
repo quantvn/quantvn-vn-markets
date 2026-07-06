@@ -15,6 +15,8 @@ from .core import (
 # Derivatives theme
 from .derivatives import get_hist as get_derivatives_hist
 
+from .macro import Macro
+
 # Stocks theme (consolidated)
 from .stocks import (
     FX,
@@ -128,6 +130,7 @@ __all__ = [
     # stocks theme
     "Company",
     "Finance",
+    "Macro",
     "Fund",
     "Listing",
     "Quote",

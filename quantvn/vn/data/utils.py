@@ -49,7 +49,7 @@ class Config:
         return "https://d207hp2u5nyjgn.cloudfront.net"
     
     @classmethod
-    def get_link_stock_url(cls) -> str:
+    def get_link_quantvn_data(cls) -> str:
         """Return the API base URL for stock data."""
         return "https://be-stock.quantvn.com"
 

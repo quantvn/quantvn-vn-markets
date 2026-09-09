@@ -1046,18 +1046,35 @@ def add_all_fund_features(
         drop_nan_threshold=drop_nan_threshold,
         cast_binary_to_int=cast_binary_to_int,
     )
-        # Fetch finance data khi có symbol
+    # Fetch finance data khi có symbol
     if symbol is not None:
         from . import stocks
 
         finance_df = stocks.Finance(symbol).ratio(period="Q")
+        if finance_df.empty:
+            return out
 
-        finance_df = finance_df.loc[:, ~finance_df.columns.duplicated()]
-        
+        finance_df = stocks._coerce_fund_merge_keys(
+            finance_df,
+            ticker_col=ticker_col,
+            year_col=year_col,
+            quarter_col=quarter_col,
+        )
+        out = stocks._coerce_fund_merge_keys(
+            out,
+            ticker_col=ticker_col,
+            year_col=year_col,
+            quarter_col=quarter_col,
+        )
+
+        merge_keys = [ticker_col, year_col, quarter_col]
+        if not all(k in finance_df.columns for k in merge_keys):
+            return out
+
         merged = pd.merge(
             out,
             finance_df,
-            on=[ticker_col, year_col, quarter_col],
+            on=merge_keys,
             how="left",
             suffixes=("", "_ratio"),
         )

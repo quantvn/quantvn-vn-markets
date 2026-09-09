@@ -1331,6 +1331,49 @@ class _FinanceProvider:
         raise NotImplementedError
 
 
+def _dedupe_columns_prefer_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep one column per name; prefer numeric dtype for year/quarter."""
+    if not df.columns.duplicated().any():
+        return df
+
+    chosen: Dict[str, int] = {}
+    for i, name in enumerate(df.columns):
+        if name not in chosen:
+            chosen[name] = i
+            continue
+        if name not in ("year", "quarter"):
+            continue
+        prev_i = chosen[name]
+        prev_series = df.iloc[:, prev_i]
+        cur_series = df.iloc[:, i]
+        if pd.api.types.is_numeric_dtype(cur_series) and not pd.api.types.is_numeric_dtype(
+            prev_series
+        ):
+            chosen[name] = i
+
+    ordered = sorted(chosen.values())
+    out = df.iloc[:, ordered].copy()
+    out.columns = [df.columns[i] for i in ordered]
+    return out
+
+
+def _coerce_fund_merge_keys(
+    df: pd.DataFrame,
+    *,
+    ticker_col: str = "ticker",
+    year_col: str = "year",
+    quarter_col: str = "quarter",
+) -> pd.DataFrame:
+    """Align ticker/year/quarter dtypes before merging with OHLC data."""
+    out = df.copy()
+    if ticker_col in out.columns:
+        out[ticker_col] = out[ticker_col].astype(str).str.upper().str.strip()
+    for col in (year_col, quarter_col):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype("Int64")
+    return out
+
+
 def _normalize_finance_ratio_df(
     df: pd.DataFrame, symbol: str, dropna: bool
 ) -> pd.DataFrame:
@@ -1345,18 +1388,26 @@ def _normalize_finance_ratio_df(
 
     out = df.copy()
 
-    # Best-effort rename cho các field phổ biến
-    rename_map = {}
+    # Backend có thể trả cả year (string) lẫn yearReport (int); ưu tiên numeric.
     if "yearReport" in out.columns:
-        rename_map["yearReport"] = "year"
+        out["year"] = pd.to_numeric(out["yearReport"], errors="coerce")
+        out = out.drop(columns=["yearReport"], errors="ignore")
+    elif "year" in out.columns:
+        out["year"] = pd.to_numeric(out["year"], errors="coerce")
+
     if "lengthReport" in out.columns:
-        rename_map["lengthReport"] = "quarter"
-    if rename_map:
-        out = out.rename(columns=rename_map)
+        out["quarter"] = pd.to_numeric(out["lengthReport"], errors="coerce")
+        out = out.drop(columns=["lengthReport"], errors="ignore")
+    elif "quarter" in out.columns:
+        out["quarter"] = pd.to_numeric(out["quarter"], errors="coerce")
+
+    out = _dedupe_columns_prefer_numeric(out)
 
     # Đảm bảo ticker tồn tại
     if "ticker" not in out.columns:
         out["ticker"] = symbol
+
+    out = _coerce_fund_merge_keys(out)
 
     if dropna:
         out = out.dropna(axis=1, how="all")

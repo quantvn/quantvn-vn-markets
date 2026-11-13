@@ -916,6 +916,76 @@ print(tr.record("bot-dau-tien")["fills"])     # các lần khớp: thời điể
 - `tr.publish(ten_bot)` công khai thành tích. Việc công khai là vĩnh viễn: về sau có thể đánh dấu rút lại, nhưng bản ghi vẫn xem được.
 - Khi máy chủ từ chối, thư viện báo `paper.TrackRecordError` với `code` như `rate_limited`, `position_out_of_range`, `bot_limit_reached`.
 
+### 6. Thị trường Mỹ và Crypto (từ bản 0.3.0)
+
+Dữ liệu cổ phiếu/ETF Mỹ và crypto lấy từ **API dữ liệu thị trường của QuantVN**, kho giá QuantVN dùng cho paper trading: nến 1 phút, gắn nhãn theo **giờ mở cửa** của nến, chỉ gồm nến đã đóng. Không cần API key; có key (`client(apikey=...)`) thì hạn mức cao hơn.
+
+| Bộ dữ liệu | Nội dung | Nguồn | Cập nhật |
+|---|---|---|---|
+| `crypto_spot` | ~40 cặp USDT spot của Binance, từ ngày niêm yết | Kho lưu trữ chính thức của Binance (data.binance.vision, có checksum) + REST API | 10 phút |
+| `crypto_perp` | Hợp đồng vĩnh cửu USD-M của các cặp đó | như trên | 10 phút |
+| `crypto_funding` | Funding rate từng kỳ | Binance | 10 phút |
+| `us_stock` | S&P 500 + ~40 ETF, nến 1 phút phiên chính (09:30–16:00 New York) | Yahoo Finance: chỉ có 30 ngày gần nhất, kho dài thêm mỗi ngày | mỗi giờ |
+| `us_stock_1d` | Nến ngày toàn bộ lịch sử, có `adj_close` | Yahoo Finance | mỗi ngày |
+
+#### 6.1. Crypto
+
+```python
+from quantvn.crypto.data import get_crypto_hist, get_funding_rates, list_crypto_symbols
+
+list_crypto_symbols("spot")[:5]                       # các cặp có trong kho
+btc = get_crypto_hist("BTCUSDT", "1h", start="2025-01-01", end="2026-01-01")
+perp = get_crypto_hist("BTCUSDT", "1m", start="2026-11-01", market="perp")
+fund = get_funding_rates("BTCUSDT", start="2026-01-01")   # Datetime, rate, mark_price
+```
+
+- Gọi như bản cũ, `get_crypto_hist("BTCUSDT")` (không có `start`/`end`), vẫn trả về giai đoạn 2019-07 đến 2022-12 như trước.
+- Khung `1m 5m 15m 30m 1h 4h 1d` lấy từ API QuantVN; các khung khác (`3m`, `2h`, `1w`, ...) hoặc khi API không trả lời thì thư viện tải thẳng từ Binance (`source="binance"` để luôn dùng Binance).
+- `Datetime` mặc định theo giờ Việt Nam như trước; `tz=None` cho UTC.
+
+#### 6.2. Cổ phiếu Mỹ
+
+```python
+from quantvn.us.data import get_us_hist, list_us_symbols
+
+aapl = get_us_hist("AAPL", "1m", start="2026-11-01")          # giờ New York
+spy_daily = get_us_hist("SPY", "1d", start="2000-01-01")
+```
+
+Gọi như bản cũ, `get_us_hist("AAPL")` (nến 1 phút, không có khoảng thời gian) vẫn đọc dịch vụ dữ liệu cũ và cần API key.
+
+#### 6.3. Paper trading Mỹ và Crypto
+
+`paper.simulate` có thêm hai thị trường, cùng quy tắc với dịch vụ Track Record:
+
+| Thị trường | Vị thế | Phí mỗi chiều | Ghi chú |
+|---|---|---|---|
+| `CRYPTO` | 0 đến 1 | 10 bp | spot |
+| `CRYPTO_PERP` | -1 đến 1 | 5 bp | trả/nhận funding ở mỗi kỳ funding |
+| `US_STOCK` | -1 đến 1 | 1 bp | |
+
+```python
+from quantvn import paper
+from quantvn.crypto.data import get_crypto_hist, get_funding_rates
+
+df = get_crypto_hist("ETHUSDT", "1m", start="2026-10-01", end="2026-11-01", market="perp", tz=None)
+df["position"] = ...                                   # tỷ trọng vốn, quyết định tại giá đóng cửa từng nến
+fund = get_funding_rates("ETHUSDT", start="2026-10-01", end="2026-11-01")
+print(paper.simulate(df, market="CRYPTO_PERP", funding=fund))
+```
+
+Funding: một kỳ funding tại thời điểm t được tính ở nến đầu tiên mở cửa từ t trở đi, trên tỷ trọng đang giữ **trước** lệnh khớp ở nến đó: vốn nhân với `1 - tỷ trọng x rate` (vị thế mua trả khi rate dương, vị thế bán nhận). Kết quả của `simulate` trùng với engine của Track Record (chênh lệch tương đối dưới 1e-13 trên 200 kịch bản ngẫu nhiên). Gửi vị thế lên Track Record vẫn qua `TrackRecord.send` (mục 5.5); thị trường nào đang nhận vị thế xem ở `TrackRecord.assets()`.
+
+#### 6.4. API trực tiếp
+
+```python
+from quantvn import marketdata
+marketdata.datasets()                                            # độ phủ và hạn mức hiện tại
+marketdata.bars("crypto_spot", "SOLUSDT", "2026-11-01", "2026-11-02", interval="15m")   # ts = ms UTC
+```
+
+Hạn mức (mặc định): không có key 30 yêu cầu/phút và 5 triệu dòng/ngày; có key 120 yêu cầu/phút và 50 triệu dòng/ngày; tối đa 600.000 dòng mỗi yêu cầu (thư viện tự chia nhỏ). Vượt hạn mức: HTTP 429, thư viện tự chờ và thử lại. Đổi địa chỉ API bằng biến môi trường `QUANTVN_DATA_URL`.
+
 ---
 
 ## Ví dụ thực tế
@@ -979,6 +1049,14 @@ Dự án này được phát hành theo giấy phép **MIT License**. Xem file [
 ---
 
 ## Changelog
+
+### Version 0.3.0
+
+- Thêm `quantvn.marketdata`: client của API dữ liệu thị trường QuantVN (cổ phiếu/ETF Mỹ, crypto spot và vĩnh cửu Binance, funding rate) có hạn mức theo key/địa chỉ (mục 6)
+- `get_crypto_hist`: thêm `start`, `end`, `market="perp"`, `tz`, `source`; tải dữ liệu sau 2022; đọc đúng thời gian micro giây trong kho Binance từ 2025. Gọi không có `start`/`end` cho kết quả như cũ
+- Thêm `get_funding_rates`, `list_crypto_symbols`, `list_us_symbols`
+- `get_us_hist`: thêm khung `5m 15m 30m 1h 1d`, `start`, `end`, `tz`. Gọi như cũ vẫn dùng dịch vụ cũ
+- `paper.simulate`: thêm thị trường `CRYPTO_PERP` (có funding, tham số `funding`) và `US_STOCK`, trùng với Track Record
 
 ### Version 0.2.1
 

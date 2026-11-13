@@ -25,6 +25,9 @@ MARKETS = {
     "VN_STOCK": {"fee": VN_STOCK_FEE, "sell_tax": VN_STOCK_SELL_TAX, "min_pos": 0.0, "max_pos": 1.0,
                  "spread_ticks": 1.0},
     "CRYPTO": {"fee": 10e-4, "sell_tax": 0.0, "min_pos": 0.0, "max_pos": 1.0, "spread_ticks": 0.0},
+    # Binance USD-M perpetuals: 5 bp per side, short allowed, funding settled at every funding event
+    "CRYPTO_PERP": {"fee": 5e-4, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
+    "US_STOCK": {"fee": 1e-4, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
 }
 
 
@@ -49,7 +52,7 @@ class PaperResult:
 
 def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 1, fee: Optional[float] = None,
              sell_tax: Optional[float] = None, spread_ticks: Optional[float] = None,
-             exchange: str = "HOSE") -> PaperResult:
+             exchange: str = "HOSE", funding: Optional[pd.DataFrame] = None) -> PaperResult:
     """Price the ``position`` column of `df` with the Track Record fill rule.
 
     `df` needs ``Datetime`` (bar open time), ``Open``, ``Close`` and ``position``, where the position on a
@@ -57,6 +60,12 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
     later: 1 is the earliest price that can exist after the decision; on the platform a 1-minute strategy
     is usually filled one bar later still, because computing and sending take part of the next minute, so
     try 2 as well. Positions are clipped to what the market records. Costs default to the service's.
+
+    ``funding`` (CRYPTO_PERP): funding events, e.g. ``quantvn.crypto.data.get_funding_rates(symbol, ...)``:
+    a frame with ``Datetime`` (or ``ts`` in ms UTC) and ``rate``. As in the Track Record service, an event at
+    time t is settled at the first bar that opens at or after t, on the weight held before that bar's fill:
+    equity is multiplied by ``1 - weight * rate`` (a long pays a positive rate, a short receives it). A bar
+    ``Datetime`` without a time zone is read as UTC.
     """
     if market not in MARKETS:
         raise ValueError(f"market must be one of {', '.join(MARKETS)}")
@@ -72,13 +81,17 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
     raw = pd.to_numeric(d["position"], errors="coerce").ffill().fillna(0.0).to_numpy(float)
     target = np.clip(raw, m["min_pos"], m["max_pos"]).round(4)
     n = len(d)
+    fund = _funding_per_bar(ts, funding) if funding is not None else np.zeros(n)
     nav, w, prev = 1.0, 0.0, None
-    navs, fills = np.empty(n), []
+    navs, fills, paid = np.empty(n), [], np.zeros(n)
     for k in range(n):
         new = target[k - delay_bars] if k >= delay_bars else 0.0      # the decision that has reached the market
         if prev is None:
             prev = op[k]
         nav *= 1 + w * (op[k] / prev - 1)
+        if fund[k]:
+            nav *= 1 - w * fund[k]
+            paid[k] = w * fund[k]
         if new != w:
             dw = abs(new - w)
             cost = dw * fee + max(max(w, 0.0) - max(new, 0.0), 0.0) * sell_tax
@@ -99,7 +112,7 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
     stats = {"total_return": float(navs[-1] - 1) if n else 0.0,
              "sharpe": float(day_ret.mean() / sd * np.sqrt(252)) if sd > 0 else None,
              "max_drawdown": float((np.r_[1.0, navs] / peak - 1).min()) if n else 0.0,
-             "days": int(len(day_nav)), "fills": len(fills)}
+             "days": int(len(day_nav)), "fills": len(fills), "funding": float(paid.sum())}
     notes = []
     if int((raw != np.clip(raw, m["min_pos"], m["max_pos"])).sum()):
         notes.append(f"positions outside {m['min_pos']:g}..{m['max_pos']:g} were clipped: a position is a share of equity")
@@ -107,4 +120,26 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
         notes.append("T+2 settlement and daily price limits are not simulated here; the Track Record service applies them")
     if market == "VN_DERIVATIVE":
         notes.append("the monthly contract roll is not simulated here; the Track Record service applies it")
+    if market == "CRYPTO_PERP" and funding is None:
+        notes.append("funding was not charged: pass funding=quantvn.crypto.data.get_funding_rates(symbol, start, end)")
     return PaperResult(nav_s, pd.DataFrame(fills, columns=["time", "price", "before", "after", "cost"]), daily, stats, notes)
+
+
+def _funding_per_bar(ts: pd.Series, funding: pd.DataFrame) -> np.ndarray:
+    """Sum of the funding rates settled at each bar: an event at t settles at the first bar opening at or after t."""
+    bar_ms = _utc_ms(ts)
+    ev = pd.to_numeric(funding["ts"]).to_numpy(np.int64) if "ts" in funding.columns else _utc_ms(funding["Datetime"])
+    rate = pd.to_numeric(funding["rate"]).to_numpy(float)
+    out = np.zeros(len(bar_ms))
+    k = np.searchsorted(bar_ms, ev, side="left")
+    ok = k < len(bar_ms)
+    np.add.at(out, k[ok], rate[ok])
+    return out
+
+
+def _utc_ms(values) -> np.ndarray:
+    """Epoch milliseconds of datetimes; values without a time zone are UTC. Independent of the datetime unit."""
+    t = pd.to_datetime(pd.Series(values).reset_index(drop=True))
+    if t.dt.tz is None:
+        t = t.dt.tz_localize("UTC")
+    return ((t - pd.Timestamp(0, tz="UTC")) // pd.Timedelta(milliseconds=1)).to_numpy(np.int64)

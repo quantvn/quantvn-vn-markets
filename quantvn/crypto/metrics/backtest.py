@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from quantvn.metrics._fills import fill_price, held_after_next_open, next_bar_pnl
+
 
 class Backtest_Crypto:
     def __init__(
@@ -34,25 +36,27 @@ class Backtest_Crypto:
         self.df.set_index("datetime", inplace=True)
         self.df.sort_index(inplace=True)
 
-        # Calculate raw PNL: price change * position
-        self.df["pnl_raw"] = self.df["Close"].diff().shift(-1) * self.df["position"]
-        self.df["pnl_raw"].fillna(0, inplace=True)
+        # A position decided on a bar is traded at the open of the next bar (see quantvn.metrics._fills).
+        self.df["fill_price"] = fill_price(self.df)
+        self.df["held"] = held_after_next_open(self.df["position"])
+        self.df["pnl_raw"] = next_bar_pnl(self.df["held"], self.df["fill_price"], self.df["Close"])
 
-        # Calculate transaction fees: charged when position changes
-        self.df["position_diff"] = self.df["position"].diff().fillna(0).abs()
+        # Calculate transaction fees: charged when the holding changes, on the fill price
+        self.df["position_diff"] = self.df["held"].diff().fillna(self.df["held"]).abs()
         self.df["transaction_fee"] = (
-            self.df["position_diff"] * self.df["Close"] * self.transaction_fee_pct
+            self.df["position_diff"] * self.df["fill_price"] * self.transaction_fee_pct
         )
         self.df["transaction_fee_cumsum"] = self.df["transaction_fee"].cumsum()
 
         # Calculate overnight holding fees
         self.df["date"] = self.df.index.date
-        self.df["overnight"] = (self.df["position"] != 0) & (
+        carried = self.df["held"].shift().fillna(0.0)
+        self.df["overnight"] = (carried != 0) & (
             self.df["date"] != self.df["date"].shift()
         )
         self.df["overnight_fee"] = (
             self.df["overnight"]
-            * self.df["position"].abs()
+            * carried.abs()
             * self.overnight_fee_per_contract
         )
         self.df["overnight_fee_cumsum"] = self.df["overnight_fee"].cumsum()

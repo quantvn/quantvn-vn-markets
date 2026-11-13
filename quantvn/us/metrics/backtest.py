@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from quantvn.metrics._fills import fill_price, held_after_next_open, next_bar_pnl
+
 
 class Backtest_US_Stock:
     """
@@ -76,22 +78,22 @@ class Backtest_US_Stock:
         )
 
         # Xây effective position tôn trọng min_hold theo SỐ PHIÊN
+        # Ý định ở bar t được khớp tại giá mở cửa của bar t+1 (xem quantvn.metrics._fills)
+        self.df["fill_price"] = fill_price(self.df)
         eff_pos, trade_qty = self._build_effective_position_with_min_hold(
             index=self.df.index,
-            desired_positions=self.df["position_intent"].to_numpy(dtype=float),
+            desired_positions=held_after_next_open(self.df["position_intent"]).to_numpy(dtype=float),
             min_hold_days=self.min_hold_days,
         )
         # Trả về numpy → gán theo vị trí, tránh lệch index
         self.df["effective_position"] = eff_pos
         self.df["trade_qty"] = trade_qty
 
-        # PnL: giữ vị thế từ bar t -> t+1
-        self.df["pnl_raw"] = (
-            self.df["Close"].diff().shift(-1).fillna(0) * self.df["effective_position"]
-        )
+        # PnL: vị thế cũ từ giá đóng cửa trước đến giá khớp, vị thế mới từ giá khớp đến giá đóng cửa
+        self.df["pnl_raw"] = next_bar_pnl(self.df["effective_position"], self.df["fill_price"], self.df["Close"])
 
-        # ===== Phí theo Alpaca =====
-        close = self.df["Close"].to_numpy(dtype=float)
+        # ===== Phí theo Alpaca, tính trên giá khớp =====
+        close = self.df["fill_price"].to_numpy(dtype=float)
         trade = self.df["trade_qty"].to_numpy(dtype=float)
         buy_shares = np.clip(trade, 0.0, None)        # > 0 ở các bar mua
         sell_shares = np.clip(-trade, 0.0, None)      # > 0 ở các bar bán

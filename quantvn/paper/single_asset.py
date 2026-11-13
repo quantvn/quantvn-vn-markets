@@ -16,21 +16,16 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
+from quantvn.metrics._fills import VN_FUTURES_FEE, VN_STOCK_FEE, VN_STOCK_SELL_TAX, vn_tick
+
 # Costs per market as the Track Record service charges them (GET https://paper.quantvn.com/v1/assets).
 # fee and sell_tax are fractions of the traded weight; spread_ticks is the bid-ask spread assumed, in price steps.
 MARKETS = {
-    "VN_DERIVATIVE": {"fee": 1.5e-4, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
-    "VN_STOCK": {"fee": 15e-4, "sell_tax": 10e-4, "min_pos": 0.0, "max_pos": 1.0, "spread_ticks": 1.0},
+    "VN_DERIVATIVE": {"fee": VN_FUTURES_FEE, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
+    "VN_STOCK": {"fee": VN_STOCK_FEE, "sell_tax": VN_STOCK_SELL_TAX, "min_pos": 0.0, "max_pos": 1.0,
+                 "spread_ticks": 1.0},
     "CRYPTO": {"fee": 10e-4, "sell_tax": 0.0, "min_pos": 0.0, "max_pos": 1.0, "spread_ticks": 0.0},
 }
-
-
-def vn_tick(price: float, exchange: str = "HOSE") -> float:
-    """Price step of a Vietnamese stock, in thousands of VND like the candles. HOSE: 10 VND below 10,000,
-    50 VND below 50,000, 100 VND from 50,000. HNX and UPCoM: 100 VND."""
-    if str(exchange).upper() != "HOSE":
-        return 0.1
-    return 0.01 if price < 10 else 0.05 if price < 50 else 0.1
 
 
 @dataclass

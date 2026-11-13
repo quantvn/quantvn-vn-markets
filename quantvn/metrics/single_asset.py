@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from quantvn.metrics._fills import fill_price, held_after_next_open, next_bar_pnl
+
 
 class TradingBacktest:
     """
@@ -46,9 +48,10 @@ class TradingBacktest:
 
         self.df = self.df.sort_index()
 
-        # Calculate PNL
-        self.df["pnl_raw"] = self.df["close"].diff().shift(-1) * self.df["position"]
-        self.df["pnl_raw"] = self.df["pnl_raw"].fillna(0)
+        # A position decided on a bar is traded at the open of the next bar (see quantvn.metrics._fills).
+        self.df["fill_price"] = fill_price(self.df, close="close")
+        self.df["held"] = held_after_next_open(self.df["position"])
+        self.df["pnl_raw"] = next_bar_pnl(self.df["held"], self.df["fill_price"], self.df["close"])
 
         self.daily_pnl = self.compute_daily_pnl()
 

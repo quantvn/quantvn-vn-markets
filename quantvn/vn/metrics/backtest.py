@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from quantvn.metrics._fills import fill_price, held_after_next_open, next_bar_pnl
+
 
 class Backtest_Derivates:
     """
@@ -56,22 +58,22 @@ class Backtest_Derivates:
         mask_fill = (time_index > t_1430) & (time_index <= t_1445)
         self.df.loc[mask_fill, "position"] = pos_filled[mask_fill]
 
-        # Calculate raw PNL
-        self.df["pnl_raw"] = self.df["Close"].diff().shift(-1) * self.df["position"]
-        self.df["pnl_raw"].fillna(0, inplace=True)
+        # A position decided on a bar is traded at the open of the next bar (see quantvn.metrics._fills).
+        self.df["fill_price"] = fill_price(self.df)
+        self.df["held"] = held_after_next_open(self.df["position"])
+        self.df["pnl_raw"] = next_bar_pnl(self.df["held"], self.df["fill_price"], self.df["Close"])
 
         # Calculate PNL after fees
         transaction_fee = 2700 / 100000  # VND per contract
         overnight_fee = 2550 / 100000  # VND per contract per day if held overnight
 
-        self.df["transaction_fee"] = self.df["position"].diff().abs() * transaction_fee
+        self.df["transaction_fee"] = self.df["held"].diff().abs().fillna(self.df["held"].abs()) * transaction_fee
 
-        # Identify overnight holdings
+        # Overnight holdings: a position, long or short, carried into the first bar of a day
         self.df["date"] = self.df.index.date
-        self.df["overnight"] = (self.df["position"] > 0) & (
-            self.df["date"] != self.df["date"].shift()
-        )
-        self.df["overnight_fee"] = self.df["overnight"] * overnight_fee
+        carried = self.df["held"].shift().fillna(0.0)
+        self.df["overnight"] = (carried != 0) & (self.df["date"] != self.df["date"].shift())
+        self.df["overnight_fee"] = self.df["overnight"] * carried.abs() * overnight_fee
 
         self.df["total_fee"] = self.df["transaction_fee"].fillna(0) + self.df[
             "overnight_fee"
@@ -144,7 +146,7 @@ class Backtest_Derivates:
         float
             Average pos enter per day
         """
-        return abs(self.df["position"].diff().dropna()).sum() / len(self.daily_PNL())
+        return abs(self.df["held"].diff().dropna()).sum() / len(self.daily_PNL())
 
     def plot_PNL(self, daily: bool = False, title: str = "Backtest Stock"):
         """
@@ -226,24 +228,24 @@ class Backtest_Stock:
         )
 
         # Xây effective position tôn trọng min_hold theo SỐ PHIÊN
+        # Ý định ở bar t được khớp tại giá mở cửa của bar t+1 (xem quantvn.metrics._fills)
+        self.df["fill_price"] = fill_price(self.df)
         eff_pos, trade_qty = self._build_effective_position_with_min_hold(
             index=self.df.index,
-            desired_positions=self.df["position_intent"].to_numpy(dtype=float),
+            desired_positions=held_after_next_open(self.df["position_intent"]).to_numpy(dtype=float),
             min_hold_days=self.min_hold_days,
         )
         # Trả về numpy → gán theo vị trí, tránh lệch index
         self.df["effective_position"] = eff_pos
         self.df["trade_qty"] = trade_qty
 
-        # PnL: giữ vị thế từ bar t -> t+1
-        self.df["pnl_raw"] = (
-            self.df["Close"].diff().shift(-1).fillna(0) * self.df["effective_position"]
-        )
+        # PnL: vị thế cũ từ giá đóng cửa trước đến giá khớp, vị thế mới từ giá khớp đến giá đóng cửa
+        self.df["pnl_raw"] = next_bar_pnl(self.df["effective_position"], self.df["fill_price"], self.df["Close"])
 
-        # Phí giao dịch: 0.1% notional mỗi lần khớp
+        # Phí giao dịch: 0.1% notional mỗi lần khớp, tính trên giá khớp
         fee_rate = 0.001
         notional_traded = (
-            np.abs(self.df["trade_qty"].to_numpy()) * self.df["Close"].to_numpy()
+            np.abs(self.df["trade_qty"].to_numpy()) * self.df["fill_price"].to_numpy()
         )
         self.df["transaction_fee"] = notional_traded * fee_rate
 

@@ -85,17 +85,21 @@ def test_without_an_open_column_the_fill_is_the_next_close_and_a_warning_is_give
 
 def test_derivative_fees_follow_the_holding():
     bt = Backtest_Derivates(frame([100, 100, 100, 100], [100, 100, 100, 100], [2, 2, 0, 0]))
-    fee = 100 * 1.5e-4                                # 1.5 bp of the fill price, per contract and side
-    assert list(bt.df["transaction_fee"]) == pytest.approx([0, 2 * fee, 0, 2 * fee])     # in at bar 1, out at bar 3
-    assert bt.PNL().iloc[-1] == pytest.approx(-4 * fee)
-    # at an index of 1,850 one side costs about 0.28 point, i.e. 27,750 VND per contract
+    hnx = 2700 / 100000                               # exchange fee per contract and side, in index points
+    tax = 100 * 0.17 / 2 * 0.001                      # 0.1% of half the initial margin on a price of 100
+    assert list(bt.df["transaction_fee"]) == pytest.approx([0, 2 * hnx, 0, 2 * hnx])     # in at bar 1, out at bar 3
+    assert list(bt.df["tax"]) == pytest.approx([0, 2 * tax, 0, 2 * tax])
+    assert bt.df["overnight_fee"].sum() == 0          # flat at the end of the day
+    assert bt.PNL().iloc[-1] == pytest.approx(-4 * (hnx + tax))
+    # at an index of 1,850 one side costs 0.027 + 0.157 = 0.184 point, i.e. about 18,400 VND per contract
     bt = Backtest_Derivates(frame([1850, 1850, 1850], [1850, 1850, 1850], [1, 1, 1]))
-    assert bt.df["transaction_fee"].sum() == pytest.approx(0.2775)
-    # holding overnight, long or short, has no fee of its own
-    two_days = pd.concat([frame([100, 100], [100, 100], [-1, -1], "2026-11-12 14:28"),
-                          frame([100, 100], [100, 100], [-1, 0], "2026-11-13 09:00")], ignore_index=True)
-    bt = Backtest_Derivates(two_days)
-    assert bt.df["overnight_fee"].sum() == 0 and bt.df["overnight"].sum() == 1
+    assert (bt.df["transaction_fee"] + bt.df["tax"]).sum() == pytest.approx(0.027 + 0.15725)
+    # a contract held at the end of Friday, long or short, pays the position fee for three calendar days
+    weekend = pd.concat([frame([100, 100], [100, 100], [-2, -2], "2026-11-13 14:28"),
+                         frame([100, 100], [100, 100], [-2, 0], "2026-11-16 09:00")], ignore_index=True)
+    bt = Backtest_Derivates(weekend)
+    assert bt.df["overnight_fee"].sum() == pytest.approx(2 * 3 * 2550 / 100000 + 2 * 2550 / 100000)
+    assert bt.df["overnight"].sum() == 1
 
 
 def test_stock_buys_at_the_next_open_and_pays_its_fee_on_that_price():
@@ -103,7 +107,18 @@ def test_stock_buys_at_the_next_open_and_pays_its_fee_on_that_price():
     assert list(bt.df["trade_qty"]) == [0, 100, 0, -100] and list(bt.df["effective_position"]) == [0, 100, 100, 0]
     raw = 100 * (52 - 51) + 100 * (53 - 52) + 100 * (54 - 53) + 100 * (54 - 54)
     assert bt.df["pnl_raw"].sum() == pytest.approx(raw)
-    buy = 100 * 51 * 0.0015 + 100 * 0.05              # commission, and half of a 100 VND step per share
-    sell = 100 * 54 * (0.0015 + 0.0010) + 100 * 0.05  # commission, sell tax, half a step
+    buy = 100 * 51 * 0.001                            # broker fee on the fill price
+    sell = 100 * 54 * (0.001 + 0.001)                 # broker fee and the 0.1% tax on sales
     assert list(bt.df["transaction_fee"]) == pytest.approx([0, buy, 0, sell])
     assert bt.df["pnl_after_fees"].sum() == pytest.approx(raw - buy - sell)
+
+
+def test_stock_bought_on_t_can_be_sold_from_13_00_on_t_plus_2():
+    rows = pd.DataFrame({"Date": ["2026-11-09", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-11", "2026-11-11"],
+                         "time": ["09:55:00", "10:00:00", "10:00:00", "09:55:00", "10:00:00", "13:00:00"],
+                         "Open": [50, 50, 52, 54, 54, 55], "Close": [50, 50, 52, 54, 54, 55],
+                         "position": [100, 100, 100, 0, 0, 0]})
+    bt = Backtest_Stock(rows)
+    # bought Monday 10:00; the sale decided on Wednesday 09:55 cannot be done at 10:00, it is done at 13:00
+    assert list(bt.df["effective_position"]) == [0, 100, 100, 100, 100, 0]
+    assert bt.df["transaction_fee"].sum() == pytest.approx(100 * 50 * 0.001 + 100 * 55 * 0.002)

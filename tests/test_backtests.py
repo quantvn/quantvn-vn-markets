@@ -85,19 +85,25 @@ def test_without_an_open_column_the_fill_is_the_next_close_and_a_warning_is_give
 
 def test_derivative_fees_follow_the_holding():
     bt = Backtest_Derivates(frame([100, 100, 100, 100], [100, 100, 100, 100], [2, 2, 0, 0]))
-    fee = 2700 / 100000
+    fee = 100 * 1.5e-4                                # 1.5 bp of the fill price, per contract and side
     assert list(bt.df["transaction_fee"]) == pytest.approx([0, 2 * fee, 0, 2 * fee])     # in at bar 1, out at bar 3
     assert bt.PNL().iloc[-1] == pytest.approx(-4 * fee)
-    # a short carried into the next day pays the overnight fee per contract, as a long does
+    # at an index of 1,850 one side costs about 0.28 point, i.e. 27,750 VND per contract
+    bt = Backtest_Derivates(frame([1850, 1850, 1850], [1850, 1850, 1850], [1, 1, 1]))
+    assert bt.df["transaction_fee"].sum() == pytest.approx(0.2775)
+    # holding overnight, long or short, has no fee of its own
     two_days = pd.concat([frame([100, 100], [100, 100], [-1, -1], "2026-11-12 14:28"),
                           frame([100, 100], [100, 100], [-1, 0], "2026-11-13 09:00")], ignore_index=True)
     bt = Backtest_Derivates(two_days)
-    assert bt.df["overnight_fee"].sum() == pytest.approx(2550 / 100000)
+    assert bt.df["overnight_fee"].sum() == 0 and bt.df["overnight"].sum() == 1
 
 
 def test_stock_buys_at_the_next_open_and_pays_its_fee_on_that_price():
-    bt = Backtest_Stock(frame([50, 51, 53], [50, 52, 54], [100, 100, 100]), min_hold_days=0)
-    assert list(bt.df["trade_qty"]) == [0, 100, 0] and list(bt.df["effective_position"]) == [0, 100, 100]
-    raw = 100 * (52 - 51) + 100 * (53 - 52) + 100 * (54 - 53)
+    bt = Backtest_Stock(frame([50, 51, 53, 54], [50, 52, 54, 54], [100, 100, 0, 0]), min_hold_days=0)
+    assert list(bt.df["trade_qty"]) == [0, 100, 0, -100] and list(bt.df["effective_position"]) == [0, 100, 100, 0]
+    raw = 100 * (52 - 51) + 100 * (53 - 52) + 100 * (54 - 53) + 100 * (54 - 54)
     assert bt.df["pnl_raw"].sum() == pytest.approx(raw)
-    assert bt.df["pnl_after_fees"].sum() == pytest.approx(raw - 100 * 51 * 0.001)
+    buy = 100 * 51 * 0.0015 + 100 * 0.05              # commission, and half of a 100 VND step per share
+    sell = 100 * 54 * (0.0015 + 0.0010) + 100 * 0.05  # commission, sell tax, half a step
+    assert list(bt.df["transaction_fee"]) == pytest.approx([0, buy, 0, sell])
+    assert bt.df["pnl_after_fees"].sum() == pytest.approx(raw - buy - sell)

@@ -18,6 +18,25 @@ import numpy as np
 import pandas as pd
 
 
+# Costs of the Vietnamese markets, the same values the QuantVN Track Record service charges.
+# VN30 futures, per side, as a fraction of the contract's value: exchange fee 2,700 VND, clearing fee
+# 2,550 VND and personal income tax of 0.1% on half the initial margin come to about 1.1 bp at an index of
+# 1,850; the rest is an allowance for broker commission and half a price step of spread.
+VN_FUTURES_FEE = 1.5e-4
+# Vietnamese stocks: a typical retail commission per side, the 0.1% tax on every sale, and half of one
+# price step for the bid-ask spread.
+VN_STOCK_FEE = 15e-4
+VN_STOCK_SELL_TAX = 10e-4
+
+
+def vn_tick(price: float, exchange: str = "HOSE") -> float:
+    """Price step of a Vietnamese stock, in thousands of VND like the candles. HOSE: 10 VND below 10,000,
+    50 VND below 50,000, 100 VND from 50,000. HNX and UPCoM: 100 VND."""
+    if str(exchange).upper() != "HOSE":
+        return 0.1
+    return 0.01 if price < 10 else 0.05 if price < 50 else 0.1
+
+
 def fill_price(df: pd.DataFrame, close: str = "Close") -> pd.Series:
     """The price at which a position decided on the previous bar is traded."""
     for name in ("Open", "open"):

@@ -639,6 +639,7 @@ Vị thế ghi ở một nến được quyết định bằng giá đóng cửa
 - Vị thế của nến `t` được khớp tại `Open` của nến `t+1`.
 - Mỗi nến ghi nhận lãi lỗ của vị thế cũ từ giá đóng cửa trước đến giá khớp, rồi của vị thế mới từ giá khớp đến giá đóng cửa.
 - Phí được tính tại nến khớp, trên giá khớp.
+- Chi phí thị trường Việt Nam dùng cùng mức với dịch vụ Track Record. Phái sinh VN30: 1,5 bp giá trị hợp đồng mỗi chiều (phí sở, phí bù trừ, thuế, môi giới và nửa bước giá), khoảng 0,28 điểm khi chỉ số ở 1.850. Cổ phiếu: 0,15% mỗi chiều, thêm 0,1% thuế khi bán và nửa bước giá. Các bản cũ chỉ tính phí sở 2.700 đồng cho phái sinh, khoảng một phần mười chi phí thực.
 - Nếu dữ liệu không có cột `Open`, vị thế được khớp tại giá đóng cửa của nến kế tiếp và thư viện phát cảnh báo.
 
 Các bản đến 0.1.25 tính lãi lỗ của vị thế ngay từ giá đóng cửa của chính nến ra quyết định, tức là một mức giá đã qua. Vì vậy **kết quả backtest của cùng một chiến lược sẽ khác so với bản cũ**, nhất là với chiến lược giao dịch nhiều. Con số mới là con số có thể đạt được khi chạy thật; các ví dụ đầu ra bên dưới được tạo từ bản cũ nên chỉ minh họa định dạng.
@@ -984,7 +985,7 @@ Dự án này được phát hành theo giấy phép **MIT License**. Xem file [
 - Thêm `quantvn.strategy`: lấy nến theo đúng khung nền tảng dùng, chạy thử chiến lược như khi chạy thật (`replay`), phát hiện nhìn trước tương lai (`check`), kiểm tra file trước khi tải lên (`validate_script`)
 - Thêm `quantvn.paper`: mô phỏng khớp lệnh tại giá mở cửa nến kế tiếp (`simulate`) và client của dịch vụ Track Record (`TrackRecord`)
 - Mọi lệnh gọi mạng trong thư viện đều có thời gian chờ tối đa 30 giây
-- **Thay đổi kết quả backtest**: mọi lớp backtest khớp vị thế tại giá mở cửa của nến kế tiếp thay vì giá đóng cửa của nến ra quyết định (mục 4.0). Phí qua đêm của phái sinh áp dụng cho cả vị thế bán
+- **Thay đổi kết quả backtest**: mọi lớp backtest khớp vị thế tại giá mở cửa của nến kế tiếp thay vì giá đóng cửa của nến ra quyết định (mục 4.0). Chi phí phái sinh và cổ phiếu Việt Nam được tính đủ theo mức của Track Record
 - Thêm bộ test (`pytest tests/`)
 
 ### Version 0.1.5

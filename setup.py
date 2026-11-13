@@ -2,11 +2,12 @@ from setuptools import find_packages, setup
 
 setup(
     name="quantvn",
-    version="0.1.25",
+    version="0.2.0",
     packages=find_packages(),
     install_requires=[
         "requests",
         "pandas",
+        "numpy",
         "matplotlib",
         "tqdm",
         "ta",
@@ -25,5 +26,6 @@ setup(
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
     ],
+    extras_require={"dev": ["pytest"]},
     python_requires=">=3.9",
 )

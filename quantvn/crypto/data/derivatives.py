@@ -78,6 +78,23 @@ def get_hist(
     if source != "binance" and interval in marketdata.INTERVALS:
         try:
             df = marketdata.bars(_MARKETS[market], symbol, start_ms, end_ms, interval)
+            newest = df.attrs.get("newest")
+            want = min(end_ms, now)
+            # the store may not reach the end of the window yet (a symbol still downloading, a late refresh):
+            # take the rest from Binance, from the first minute the store does not have
+            if source == "auto" and newest is not None and newest + 60_000 < want - 15 * 60_000:
+                step = marketdata.INTERVALS[interval] * 60_000
+                rest_from = max(start_ms, (newest + 60_000 + step - 1) // step * step)
+                if rest_from < want:
+                    rest = _from_binance(symbol, interval, rest_from, want, market, cache_dir, None)
+                    head = marketdata.to_candles(df, None)
+                    head = head[head["Datetime"] < pd.Timestamp(rest_from, unit="ms", tz="UTC")]
+                    both = pd.concat([x for x in (head, rest) if len(x)], ignore_index=True) if len(head) or len(rest) else head
+                    if tz and len(both):
+                        both["Datetime"] = both["Datetime"].dt.tz_convert(tz)
+                        both["Date"] = both["Datetime"].dt.strftime("%Y-%m-%d")
+                        both["time"] = both["Datetime"].dt.strftime("%H:%M:%S")
+                    return both.reset_index(drop=True)
             return marketdata.to_candles(df, tz)
         except (requests.RequestException, marketdata.MarketDataError) as e:
             if source == "quantvn" or (isinstance(e, marketdata.MarketDataError) and e.code in ("invalid_time",)):

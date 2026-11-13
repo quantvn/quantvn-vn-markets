@@ -98,17 +98,27 @@ def bars(dataset: str, symbol: str, start: TimeLike = None, end: TimeLike = None
     now = int(time.time() * 1000)
     end_ms = to_ms(end, now)
     start_ms = to_ms(start, end_ms - 7 * 86_400_000)
-    step = int(MAX_ROWS * 0.9) * INTERVALS[interval] * 60_000
-    parts, a = [], start_ms
+    if dataset == "us_stock_1d":
+        step = 100 * 365 * 86_400_000                         # one row per session: any window fits
+    elif interval == "1m":
+        step = int(MAX_ROWS * 0.9) * 60_000
+    else:
+        step = 365 * 86_400_000                               # the API aggregates at most 400 days per request
+    parts, a, newest = [], start_ms, None
     while a < end_ms:
         b = min(a + step, end_ms)
         r = _get("/bars", {"dataset": dataset, "symbol": symbol, "start": a, "end": b, "interval": interval})
         parts.append(pd.read_parquet(io.BytesIO(r.content)))
+        if r.headers.get("X-Newest", "").isdigit():
+            newest = int(r.headers["X-Newest"])
         a = b
     parts = [p for p in parts if len(p)]
     if not parts:
-        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
-    return pd.concat(parts, ignore_index=True).drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+        out = pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
+    else:
+        out = pd.concat(parts, ignore_index=True).drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
+    out.attrs["newest"] = newest            # open time of the newest 1-minute bar stored for the symbol
+    return out
 
 
 def funding(symbol: str, start: TimeLike = None, end: TimeLike = None) -> pd.DataFrame:

@@ -48,8 +48,11 @@ class FakeApi:
             buf = io.BytesIO()
             f.to_parquet(buf)
 
+            newest = str(int(self.frame["ts"].max())) if len(self.frame) else "0"
+
             class R:
                 content = buf.getvalue()
+                headers = {"X-Newest": newest}
             return R()
         raise AssertionError(path)
 
@@ -75,8 +78,9 @@ def test_crypto_hist_default_window_is_the_one_of_0_2(monkeypatch):
     fake = FakeApi(api_bars(T0, 1))
     monkeypatch.setattr(marketdata, "_get", fake)
     crypto.get_hist("BTCUSDT", interval="1d")
-    p = fake.calls[0][1]
-    assert p["start"] == marketdata.to_ms("2019-06-30T17:00") and p["end"] == marketdata.to_ms("2022-12-31T17:00")
+    first, last = fake.calls[0][1], fake.calls[-1][1]
+    assert first["start"] == marketdata.to_ms("2019-06-30T17:00") and last["end"] == marketdata.to_ms("2022-12-31T17:00")
+    assert len(fake.calls) == 4                         # aggregated intervals: a year per request
 
 
 def test_crypto_hist_falls_back_to_binance(monkeypatch):
@@ -93,6 +97,28 @@ def test_crypto_hist_falls_back_to_binance(monkeypatch):
     assert seen == {"symbol": "PEPEUSDT", "interval": "1m", "market": "perp"}
     with pytest.raises(marketdata.MarketDataError):
         crypto.get_hist("PEPEUSDT", start="2026-01-01", end="2026-01-02", source="quantvn")
+
+
+def test_crypto_store_that_stops_early_is_topped_up_from_binance(monkeypatch):
+    # the store has 30 minutes from W0; the window asks for 2 hours that ended long ago
+    W0 = T0 - 30 * 86_400_000
+    monkeypatch.setattr(marketdata, "_get", FakeApi(api_bars(W0, 30)))
+    seen = {}
+
+    def binance(symbol, interval, start_ms, end_ms, market, cache_dir, tz):
+        seen.update(start=start_ms, end=end_ms, tz=tz)
+        return marketdata.to_candles(api_bars(start_ms, (end_ms - start_ms) // 60_000), None)
+    monkeypatch.setattr(crypto, "_from_binance", binance)
+    df = crypto.get_hist("BTCUSDT", start=W0, end=W0 + 120 * 60_000)
+    assert seen == {"start": W0 + 30 * 60_000, "end": W0 + 120 * 60_000, "tz": None}
+    assert len(df) == 120 and df["Datetime"].is_monotonic_increasing and df["Datetime"].is_unique
+    assert str(df["Datetime"].dt.tz) == "Asia/Ho_Chi_Minh" and df["time"].iloc[0] == "07:00:00"
+
+
+def test_crypto_complete_store_is_not_topped_up(monkeypatch):
+    monkeypatch.setattr(marketdata, "_get", FakeApi(api_bars(T0, 200)))
+    monkeypatch.setattr(crypto, "_from_binance", lambda *a, **k: pytest.fail("Binance called"))
+    assert len(crypto.get_hist("BTCUSDT", start=T0, end=T0 + 120 * 60_000)) == 120
 
 
 def test_crypto_interval_the_api_does_not_serve_goes_to_binance(monkeypatch):

@@ -632,6 +632,17 @@ print(roe_data.head())
 
 ### 4. Backtesting & Performance Analysis
 
+#### 4.0. Quy tắc khớp lệnh (thay đổi từ bản 0.2.0)
+
+Vị thế ghi ở một nến được quyết định bằng giá đóng cửa của nến đó, nên giá sớm nhất có thể giao dịch là giá **mở cửa của nến kế tiếp**. Từ bản 0.2.0, các lớp backtest tính theo đúng trình tự này:
+
+- Vị thế của nến `t` được khớp tại `Open` của nến `t+1`.
+- Mỗi nến ghi nhận lãi lỗ của vị thế cũ từ giá đóng cửa trước đến giá khớp, rồi của vị thế mới từ giá khớp đến giá đóng cửa.
+- Phí được tính tại nến khớp, trên giá khớp.
+- Nếu dữ liệu không có cột `Open`, vị thế được khớp tại giá đóng cửa của nến kế tiếp và thư viện phát cảnh báo.
+
+Các bản đến 0.1.25 tính lãi lỗ của vị thế ngay từ giá đóng cửa của chính nến ra quyết định, tức là một mức giá đã qua. Vì vậy **kết quả backtest của cùng một chiến lược sẽ khác so với bản cũ**, nhất là với chiến lược giao dịch nhiều. Con số mới là con số có thể đạt được khi chạy thật; các ví dụ đầu ra bên dưới được tạo từ bản cũ nên chỉ minh họa định dạng.
+
 #### 4.1. Backtest cho phái sinh
 
 ```python
@@ -868,7 +879,7 @@ Trong sandbox, `client(apikey=...)` không làm gì, còn `get_derivatives_hist`
 
 #### 5.4. Mô phỏng khớp lệnh trung thực
 
-`Backtest_Derivates` và `Backtest_Stock` tính lãi lỗ của vị thế ở một nến bằng chính giá đóng cửa của nến đó. Nhưng vị thế chỉ được biết **sau khi** nến đóng, nên không ai mua bán được ở giá ấy. `paper.simulate` dùng quy tắc của dịch vụ Track Record: vị thế quyết định ở một nến được khớp tại giá **mở cửa** của nến sau.
+Một vị thế chỉ được biết **sau khi** nến đóng, nên không ai mua bán được ở chính giá đóng cửa đó. Từ bản 0.2.0, mọi lớp backtest của thư viện (`Backtest_Derivates`, `Backtest_Stock`, `Backtest_Crypto`, `Backtest_US_Stock`, `TradingBacktest`) khớp vị thế tại giá **mở cửa** của nến sau (mục 4.0). `paper.simulate` dùng cùng quy tắc đó, nhưng tính theo cách của dịch vụ Track Record: vị thế là tỷ trọng vốn, vốn bắt đầu từ 1 và cộng dồn theo lãi kép, chi phí lấy theo từng thị trường.
 
 ```python
 from quantvn import paper
@@ -973,6 +984,7 @@ Dự án này được phát hành theo giấy phép **MIT License**. Xem file [
 - Thêm `quantvn.strategy`: lấy nến theo đúng khung nền tảng dùng, chạy thử chiến lược như khi chạy thật (`replay`), phát hiện nhìn trước tương lai (`check`), kiểm tra file trước khi tải lên (`validate_script`)
 - Thêm `quantvn.paper`: mô phỏng khớp lệnh tại giá mở cửa nến kế tiếp (`simulate`) và client của dịch vụ Track Record (`TrackRecord`)
 - Mọi lệnh gọi mạng trong thư viện đều có thời gian chờ tối đa 30 giây
+- **Thay đổi kết quả backtest**: mọi lớp backtest khớp vị thế tại giá mở cửa của nến kế tiếp thay vì giá đóng cửa của nến ra quyết định (mục 4.0). Phí qua đêm của phái sinh áp dụng cho cả vị thế bán
 - Thêm bộ test (`pytest tests/`)
 
 ### Version 0.1.5

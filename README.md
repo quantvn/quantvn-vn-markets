@@ -639,7 +639,7 @@ Vị thế ghi ở một nến được quyết định bằng giá đóng cửa
 - Vị thế của nến `t` được khớp tại `Open` của nến `t+1`.
 - Mỗi nến ghi nhận lãi lỗ của vị thế cũ từ giá đóng cửa trước đến giá khớp, rồi của vị thế mới từ giá khớp đến giá đóng cửa.
 - Phí được tính tại nến khớp, trên giá khớp.
-- Chi phí thị trường Việt Nam dùng cùng mức với dịch vụ Track Record. Phái sinh VN30: 1,5 bp giá trị hợp đồng mỗi chiều (phí sở, phí bù trừ, thuế, môi giới và nửa bước giá), khoảng 0,28 điểm khi chỉ số ở 1.850. Cổ phiếu: 0,15% mỗi chiều, thêm 0,1% thuế khi bán và nửa bước giá. Các bản cũ chỉ tính phí sở 2.700 đồng cho phái sinh, khoảng một phần mười chi phí thực.
+- Chi phí thị trường Việt Nam được tính theo từng khoản, đúng như nút "Run test" trên website QuantVN. Phái sinh VN30, mỗi hợp đồng mỗi chiều: phí giao dịch HNX 2.700 đồng và thuế thu nhập cá nhân 0,1% trên (giá khớp × 100.000 × tỷ lệ ký quỹ ban đầu 17% ÷ 2); thêm phí quản lý vị thế VSDC 2.550 đồng mỗi hợp đồng mỗi ngày cho vị thế còn mở cuối ngày, tính cả ngày nghỉ. Khi chỉ số ở 1.850, một chiều tốn khoảng 0,18 điểm. Cổ phiếu: phí môi giới 0,1% mỗi chiều và thuế 0,1% trên giá trị bán; cổ phiếu mua ngày T bán được từ 13:00 ngày T+2. Phí môi giới phái sinh và chênh lệch giá mua bán không nằm trong các lớp backtest; `paper.simulate` (mục 5.4) có tính.
 - Nếu dữ liệu không có cột `Open`, vị thế được khớp tại giá đóng cửa của nến kế tiếp và thư viện phát cảnh báo.
 
 Các bản đến 0.1.25 tính lãi lỗ của vị thế ngay từ giá đóng cửa của chính nến ra quyết định, tức là một mức giá đã qua. Vì vậy **kết quả backtest của cùng một chiến lược sẽ khác so với bản cũ**, nhất là với chiến lược giao dịch nhiều. Con số mới là con số có thể đạt được khi chạy thật; các ví dụ đầu ra bên dưới được tạo từ bản cũ nên chỉ minh họa định dạng.
@@ -891,7 +891,7 @@ print(result)
 print(paper.simulate(df, market="VN_DERIVATIVE", delay_bars=2))  # chậm thêm một nến, gần với chạy thật ở khung 1 phút
 ```
 
-- Chi phí mặc định lấy theo dịch vụ: phái sinh 1,5 bp mỗi chiều; cổ phiếu 15 bp mỗi chiều, thêm 10 bp thuế khi bán và nửa bước giá cho chênh lệch mua bán.
+- Chi phí mặc định lấy theo dịch vụ: phái sinh 1,5 bp mỗi chiều; cổ phiếu 15 bp mỗi chiều, thêm 10 bp thuế khi bán và nửa bước giá cho chênh lệch mua bán. Mức này gồm cả phí môi giới và chênh lệch giá mua bán nên cao hơn chi phí theo từng khoản của các lớp backtest (mục 4.0).
 - `result.nav` là vốn theo từng nến (bắt đầu từ 1), `result.fills` là các lần khớp, `result.daily` là lợi nhuận theo ngày, `result.stats` gồm lợi nhuận, Sharpe, mức sụt giảm tối đa.
 - `result.notes` ghi rõ những gì mô phỏng này **chưa** tính: quy định T+2 và biên độ giá với cổ phiếu, việc chuyển hợp đồng hằng tháng với phái sinh. Dịch vụ Track Record có áp dụng các quy định đó.
 
@@ -979,6 +979,11 @@ Dự án này được phát hành theo giấy phép **MIT License**. Xem file [
 ---
 
 ## Changelog
+
+### Version 0.2.1
+
+- Chi phí của `Backtest_Derivates` và `Backtest_Stock` trùng với website QuantVN: phí HNX, thuế thu nhập cá nhân và phí quản lý vị thế VSDC cho phái sinh; phí 0,1% và thuế bán 0,1% cho cổ phiếu, bán được từ 13:00 ngày T+2 (mục 4.0). Cùng một chiến lược cho cùng một kết quả trong thư viện và khi bấm "Run test"
+- `paper.simulate` giữ mức phí của dịch vụ Track Record (1,5 bp mỗi chiều cho phái sinh)
 
 ### Version 0.2.0
 

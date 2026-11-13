@@ -18,15 +18,52 @@ import numpy as np
 import pandas as pd
 
 
-# Costs of the Vietnamese markets, the same values the QuantVN Track Record service charges.
-# VN30 futures, per side, as a fraction of the contract's value: exchange fee 2,700 VND, clearing fee
-# 2,550 VND and personal income tax of 0.1% on half the initial margin come to about 1.1 bp at an index of
+# --- Backtest classes: the itemised statutory costs, the same the QuantVN website charges in "Run test".
+# Sources: HNX trading fee and VSDC position fee, Thong tu 101/2021/TT-BTC; derivative personal income tax,
+# Thong tu 87/2026/TT-BTC Dieu 5; initial margin, VSDC appendix effective 2026-10-16.
+VN_FUT_MULTIPLIER = 100_000          # VND per VN30 index point
+HNX_FEE_VND = 2_700                  # per contract per matched side
+VSDC_POSITION_FEE_VND = 2_550        # per contract per day, on positions open at the end of the day
+DERIVATIVE_PIT_RATE = 0.001          # 0.1 % of the transfer price
+VN30_INITIAL_MARGIN = 0.17           # transfer price = price x multiplier x contracts x initial margin / 2
+STOCK_FEE_RATE = 0.001               # broker fee assumption on buys and sells (brokers differ)
+STOCK_SELL_TAX_RATE = 0.001          # personal income tax on the value of a sale
+STOCK_AFTERNOON_SELL_MINUTE = 13 * 60   # shares bought on T can be sold from 13:00 on T+2
+
+# --- quantvn.paper.simulate: the flat rates of the QuantVN Track Record service (paper.quantvn.com).
+# VN30 futures, per side: the statutory items above are about 1.1 bp of the contract's value at an index of
 # 1,850; the rest is an allowance for broker commission and half a price step of spread.
 VN_FUTURES_FEE = 1.5e-4
 # Vietnamese stocks: a typical retail commission per side, the 0.1% tax on every sale, and half of one
 # price step for the bid-ask spread.
 VN_STOCK_FEE = 15e-4
 VN_STOCK_SELL_TAX = 10e-4
+
+
+def sellable(days_held: int, minute_of_day: int, min_hold_days: int) -> bool:
+    """A stock lot settles on T+2: sellable on later days, or on day min_hold_days - 1 from 13:00."""
+    return days_held >= min_hold_days or (days_held == min_hold_days - 1 and minute_of_day >= STOCK_AFTERNOON_SELL_MINUTE)
+
+
+def derivative_costs(df: pd.DataFrame) -> None:
+    """Add HNX fee, income tax and VSDC position fee (index points per contract) to a time-indexed futures
+    frame that has `held` and `fill_price`. Contracts are traded when the holding changes, at the fill price;
+    the position fee is on the holding at the end of each day, for every calendar day until the next
+    trading day in the frame (1 on the last day)."""
+    held = df["held"]
+    traded = held.diff().abs().fillna(held.abs())
+    df["transaction_fee"] = traded * HNX_FEE_VND / VN_FUT_MULTIPLIER
+    df["tax"] = (traded * df["fill_price"] * VN30_INITIAL_MARGIN / 2 * DERIVATIVE_PIT_RATE).fillna(0.0)
+    dates = pd.Series(df.index.date, index=df.index)
+    df["date"] = dates.to_numpy()
+    days = pd.Series(sorted(set(dates)))
+    gaps = (pd.to_datetime(days.shift(-1)) - pd.to_datetime(days)).dt.days.fillna(1)
+    held_days = dates.map(dict(zip(days, gaps)))
+    last_bar = dates != dates.shift(-1)
+    carried = held.shift().fillna(0.0)
+    df["overnight"] = (carried != 0) & (dates != dates.shift())
+    df["overnight_fee"] = (held.abs() * VSDC_POSITION_FEE_VND / VN_FUT_MULTIPLIER * held_days).where(last_bar, 0.0)
+    df["total_fee"] = df["transaction_fee"] + df["tax"] + df["overnight_fee"]
 
 
 def vn_tick(price: float, exchange: str = "HOSE") -> float:

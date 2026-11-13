@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from quantvn.metrics._fills import (VN_FUTURES_FEE, VN_STOCK_FEE, VN_STOCK_SELL_TAX, fill_price,
-                                    held_after_next_open, next_bar_pnl, vn_tick)
+from quantvn.metrics._fills import (STOCK_FEE_RATE, STOCK_SELL_TAX_RATE, derivative_costs, fill_price,
+                                    held_after_next_open, next_bar_pnl, sellable)
 
 
 class Backtest_Derivates:
@@ -64,21 +64,10 @@ class Backtest_Derivates:
         self.df["held"] = held_after_next_open(self.df["position"])
         self.df["pnl_raw"] = next_bar_pnl(self.df["held"], self.df["fill_price"], self.df["Close"])
 
-        # Costs, in index points per contract: every contract traded pays VN_FUTURES_FEE of the fill price
-        # (exchange fee, clearing fee, tax, commission and half a price step; see quantvn.metrics._fills).
-        # Until 0.1.25 only the exchange fee of 2,700 VND was charged per trade, about a tenth of the real
-        # cost, and the clearing fee was booked as a daily holding fee on long positions.
-        traded = self.df["held"].diff().abs().fillna(self.df["held"].abs())
-        self.df["transaction_fee"] = traded * self.df["fill_price"] * VN_FUTURES_FEE
-
-        self.df["date"] = self.df.index.date
-        carried = self.df["held"].shift().fillna(0.0)
-        self.df["overnight"] = (carried != 0) & (self.df["date"] != self.df["date"].shift())
-        self.df["overnight_fee"] = 0.0             # holding a contract overnight has no fee of its own
-
-        self.df["total_fee"] = self.df["transaction_fee"].fillna(0) + self.df[
-            "overnight_fee"
-        ].fillna(0)
+        # Costs in index points per contract, itemised as on the QuantVN website: HNX fee and personal
+        # income tax on every contract traded, at the fill price, and the VSDC position fee on what is
+        # held at the end of each day (see quantvn.metrics._fills).
+        derivative_costs(self.df)
         self.df["pnl_after_fees"] = self.df["pnl_raw"] - self.df["total_fee"]
 
     def PNL(self):
@@ -243,14 +232,12 @@ class Backtest_Stock:
         # PnL: vị thế cũ từ giá đóng cửa trước đến giá khớp, vị thế mới từ giá khớp đến giá đóng cửa
         self.df["pnl_raw"] = next_bar_pnl(self.df["effective_position"], self.df["fill_price"], self.df["Close"])
 
-        # Chi phí mỗi lần khớp, tính trên giá khớp: phí môi giới 0,15% mỗi chiều, thuế 0,1% khi bán,
-        # và nửa bước giá cho chênh lệch mua bán (cùng mức với dịch vụ Track Record).
+        # Chi phí mỗi lần khớp, tính trên giá khớp, như trên website QuantVN: phí môi giới 0,1% mỗi chiều
+        # và thuế 0,1% trên giá trị bán.
         qty = self.df["trade_qty"].to_numpy(dtype=float)
         fill = self.df["fill_price"].to_numpy(dtype=float)
-        half_step = np.array([vn_tick(p) / 2 if np.isfinite(p) else 0.0 for p in fill])
-        self.df["transaction_fee"] = (np.abs(qty) * fill * VN_STOCK_FEE
-                                      + np.clip(-qty, 0.0, None) * fill * VN_STOCK_SELL_TAX
-                                      + np.abs(qty) * half_step)
+        self.df["transaction_fee"] = (np.abs(qty) * fill * STOCK_FEE_RATE
+                                      + np.clip(-qty, 0.0, None) * fill * STOCK_SELL_TAX_RATE)
 
         self.df["pnl_after_fees"] = self.df["pnl_raw"] - self.df["transaction_fee"]
 
@@ -277,6 +264,7 @@ class Backtest_Stock:
         dates = pd.Index(index.date)
         day_change = np.r_[True, dates[1:] != dates[:-1]]
         day_id = np.cumsum(day_change) - 1  # 0-based day id
+        minutes = np.asarray(index.hour * 60 + index.minute)
 
         effective_pos = np.zeros(n, dtype=float)
         trade_qty = np.zeros(n, dtype=float)
@@ -319,8 +307,8 @@ class Backtest_Stock:
                         qty_rem, d_entry = lot
                         if qty_rem <= 1e-12:
                             continue
-                        # Đủ điều kiện nếu số PHIÊN đã qua >= min_hold_days
-                        if (int(day_id[i]) - int(d_entry)) >= min_hold_days:
+                        # Thanh toán T+2: bán được từ 13:00 của ngày T+2, hoặc bất kỳ lúc nào sau đó
+                        if sellable(int(day_id[i]) - int(d_entry), int(minutes[i]), min_hold_days):
                             sell_amt = min(qty_rem, to_sell)
                             lot[0] = qty_rem - sell_amt
                             to_sell -= sell_amt

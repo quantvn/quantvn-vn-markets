@@ -15,6 +15,8 @@
 
 **Công cụ phân tích mạnh mẽ**: Tích hợp sẵn các chỉ số hiệu suất, backtesting, và đánh giá rủi ro.
 
+**Viết chiến lược cho nền tảng QuantVN**: Chạy thử chiến lược như khi chạy thật, phát hiện nhìn trước tương lai, mô phỏng khớp lệnh trung thực và gửi vị thế lên Track Record (mục 5).
+
 ## Quy trình QuantVN
 
 Để xây dựng một hệ thống giao dịch thành công, QuantVN vận hành theo một quy trình 4 bước khép kín và logic.
@@ -807,6 +809,101 @@ VaR (95%): 25 VND
 - `value_at_risk(confidence_level)`: Value at Risk
 - `risk_of_ruin()`: Xác suất phá sản
 
+### 5. Viết chiến lược và Paper trading
+
+Phần này dành cho người tự viết chiến lược để chạy trên QuantVN. Hai module `quantvn.strategy` và `quantvn.paper` giúp bạn biết trước chiến lược sẽ chạy thế nào trên nền tảng, và kết quả sẽ được tính ra sao.
+
+#### 5.1. Chiến lược là gì
+
+Một chiến lược là một file Python có hàm `gen_position(df)` ở cấp ngoài cùng:
+
+```python
+import pandas as pd
+
+def gen_position(df):
+    df["ma"] = df["Close"].rolling(20).mean()
+    df["position"] = (df["Close"] > df["ma"]).astype(int) * 2 - 1   # 1: mua, -1: bán
+    return df
+```
+
+- `df` có các cột `Datetime, Date, time, Open, High, Low, Close, volume`. `Datetime` là thời điểm **mở** nến, giờ Việt Nam.
+- Hàm trả về DataFrame có cột `position`. Giá trị ở dòng cuối là quyết định cho nến vừa đóng.
+- `position` là **tỷ trọng vốn**: từ -1 đến 1 với phái sinh VN30, từ 0 đến 1 với cổ phiếu (không bán khống). Giá trị ngoài khoảng này bị cắt về biên. Đây không phải số hợp đồng hay số cổ phiếu.
+
+Mỗi khi một nến đóng, nền tảng gọi `gen_position` với các nến của **phiên giao dịch trước và hôm nay**, tính đến nến vừa đóng. Khung nến: 1 phút với `VN30F1M`, 5 phút với `VN30F5M`, 15 phút với `VN30F15M`, 5 phút với cổ phiếu.
+
+#### 5.2. Kiểm tra trước khi tải lên
+
+```python
+from quantvn import strategy
+
+bars = strategy.candles("VN30F1M")            # nến từ đúng nguồn nền tảng dùng, không cần API key
+report = strategy.check(gen_position, bars, symbol="VN30F1M")
+print(report)
+```
+
+`check` gọi chiến lược tại nhiều thời điểm trong ngày, mỗi lần chỉ đưa các nến đã có ở thời điểm đó, rồi so với vị thế mà chính hàm này tính ra khi được xem cả ngày. Báo cáo cho biết:
+
+- **Nhìn trước tương lai (look-ahead).** Nếu hai kết quả khác nhau, backtest của bạn đang dùng dữ liệu chưa tồn tại (ví dụ `shift(-1)`, hoặc chuẩn hóa theo cả chuỗi). Kết quả backtest như vậy sẽ không lặp lại khi chạy thật.
+- **Lỗi hợp đồng.** Thiếu cột `position`, vị thế là `NaN` (thường do chưa đủ nến cho chỉ báo), hoặc hàm báo lỗi.
+- **Vị thế bị cắt.** Giá trị vượt khoảng cho phép.
+- **Chạy chậm.** Mỗi lần gọi bị dừng sau 10 giây CPU; nên giữ dưới một giây.
+
+`report.live` là bảng quyết định theo từng nến, `report.differences` liệt kê các nến có khác biệt. Muốn xem toàn bộ quyết định trong ngày, dùng `strategy.replay(gen_position, bars, "VN30F1M")`.
+
+#### 5.3. Kiểm tra file chiến lược
+
+Chiến lược tải lên chạy trong sandbox: không có mạng, không ghi được file ngoài thư mục tạm, và mỗi nến là một tiến trình mới. Vì vậy mọi lệnh nằm ngoài hàm đều chạy lại ở mỗi nến, và không có gì được nhớ giữa hai lần gọi.
+
+```python
+print(strategy.validate_script("my_strategy.py"))
+
+gen_position = strategy.load_script("my_strategy.py")   # nạp file theo cách sandbox nạp
+print(strategy.check(gen_position, bars))
+```
+
+`validate_script` đọc mã nguồn (không chạy) và báo những chỗ sẽ hỏng trong sandbox: import thư viện cần mạng (`requests`, `yfinance`...), gọi các hàm lấy dữ liệu trực tuyến của SDK, `input()`, thiếu hàm `gen_position`. Nó cũng cảnh báo khi phần backtest và vẽ biểu đồ nằm ngoài hàm; hãy đặt phần đó dưới `if __name__ == "__main__":`.
+
+Trong sandbox, `client(apikey=...)` không làm gì, còn `get_derivatives_hist` / `get_stock_hist` trả về đúng bộ nến mà `gen_position` nhận được. Hãy dùng tham số `df` thay vì tự lấy dữ liệu.
+
+#### 5.4. Mô phỏng khớp lệnh trung thực
+
+`Backtest_Derivates` và `Backtest_Stock` tính lãi lỗ của vị thế ở một nến bằng chính giá đóng cửa của nến đó. Nhưng vị thế chỉ được biết **sau khi** nến đóng, nên không ai mua bán được ở giá ấy. `paper.simulate` dùng quy tắc của dịch vụ Track Record: vị thế quyết định ở một nến được khớp tại giá **mở cửa** của nến sau.
+
+```python
+from quantvn import paper
+
+df = gen_position(bars.copy())
+result = paper.simulate(df, market="VN_DERIVATIVE")              # khớp ở giá mở cửa nến kế tiếp
+print(result)
+print(paper.simulate(df, market="VN_DERIVATIVE", delay_bars=2))  # chậm thêm một nến, gần với chạy thật ở khung 1 phút
+```
+
+- Chi phí mặc định lấy theo dịch vụ: phái sinh 1,5 bp mỗi chiều; cổ phiếu 15 bp mỗi chiều, thêm 10 bp thuế khi bán và nửa bước giá cho chênh lệch mua bán.
+- `result.nav` là vốn theo từng nến (bắt đầu từ 1), `result.fills` là các lần khớp, `result.daily` là lợi nhuận theo ngày, `result.stats` gồm lợi nhuận, Sharpe, mức sụt giảm tối đa.
+- `result.notes` ghi rõ những gì mô phỏng này **chưa** tính: quy định T+2 và biên độ giá với cổ phiếu, việc chuyển hợp đồng hằng tháng với phái sinh. Dịch vụ Track Record có áp dụng các quy định đó.
+
+#### 5.5. Gửi vị thế lên Track Record
+
+Nếu bạn tự chạy chiến lược trên máy của mình, chương trình chỉ cần gửi vị thế. Máy chủ ghi lại thời điểm nhận và tự tính kết quả từ nguồn giá của nó: mỗi tín hiệu khớp tại giá mở cửa của nến 1 phút đầu tiên sau khi máy chủ nhận được. Giá do chương trình của bạn gửi lên không được dùng.
+
+```python
+from quantvn.paper import TrackRecord
+
+tr = TrackRecord(email="ban@example.com", api_key="API_KEY_CUA_BAN")
+tr.send("bot-dau-tien", "VN30F1M", 1)        # mua toàn bộ vốn
+tr.send("bot-dau-tien", "VN30F1M", 0)        # về trạng thái không nắm giữ
+
+print(tr.bots())                              # các bot và thống kê mới nhất
+print(tr.record("bot-dau-tien")["fills"])     # các lần khớp: thời điểm, giá, vị thế trước/sau, phí
+```
+
+- `email` là email tài khoản QuantVN sở hữu API key.
+- Kết quả được tính lại mỗi giờ, nên bot mới sẽ chưa có số liệu ngay.
+- `tr.assets()` trả về các mã đang nhận tín hiệu, kèm khoảng vị thế và chi phí của từng thị trường.
+- `tr.publish(ten_bot)` công khai thành tích. Việc công khai là vĩnh viễn: về sau có thể đánh dấu rút lại, nhưng bản ghi vẫn xem được.
+- Khi máy chủ từ chối, thư viện báo `paper.TrackRecordError` với `code` như `rate_limited`, `position_out_of_range`, `bot_limit_reached`.
+
 ---
 
 ## Ví dụ thực tế
@@ -870,6 +967,13 @@ Dự án này được phát hành theo giấy phép **MIT License**. Xem file [
 ---
 
 ## Changelog
+
+### Version 0.2.0
+
+- Thêm `quantvn.strategy`: lấy nến theo đúng khung nền tảng dùng, chạy thử chiến lược như khi chạy thật (`replay`), phát hiện nhìn trước tương lai (`check`), kiểm tra file trước khi tải lên (`validate_script`)
+- Thêm `quantvn.paper`: mô phỏng khớp lệnh tại giá mở cửa nến kế tiếp (`simulate`) và client của dịch vụ Track Record (`TrackRecord`)
+- Mọi lệnh gọi mạng trong thư viện đều có thời gian chờ tối đa 30 giây
+- Thêm bộ test (`pytest tests/`)
 
 ### Version 0.1.5
 

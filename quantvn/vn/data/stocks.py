@@ -1511,6 +1511,7 @@ class _BackendFinanceProvider(_FinanceProvider):
             f"{QUANTVN_URL}/vn/finance/balance-sheet",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -1543,6 +1544,7 @@ class _BackendFinanceProvider(_FinanceProvider):
             f"{QUANTVN_URL}/vn/finance/income-statement",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -1575,6 +1577,7 @@ class _BackendFinanceProvider(_FinanceProvider):
             f"{QUANTVN_URL}/vn/finance/cash-flow",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -2400,6 +2403,7 @@ def get_hist(symbol: str, resolution: str = "1H"):
         f"{QUANTVN_URL}/vn/stock/stock-historical",
         json=payload,
         headers={"x-api-key": api_key},
+        timeout=30,
     )
 
     if response.status_code == 200:

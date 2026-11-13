@@ -54,6 +54,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/gdp",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -102,6 +103,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/cpi",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -150,6 +152,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/fdi",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -200,6 +203,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/m2",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -248,6 +252,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/credit",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -298,6 +303,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/population",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -347,6 +353,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/labor-force",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:
@@ -396,6 +403,7 @@ class Macro:
             f"{Config.get_link_quantvn_data()}/vn/macro/total-trade-value",
             json=payload,
             headers={"x-api-key": api_key},
+            timeout=30,
         )
 
         if response.status_code == 200:

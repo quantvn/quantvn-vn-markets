@@ -47,6 +47,7 @@ def get_hist(symbol: str, frequency: str):
         f"{LAMBDA_URL}/data-derivatives",
         json=payload,
         headers={"x-api-key": api_key},
+        timeout=30,
     )
 
     if response.status_code == 200:

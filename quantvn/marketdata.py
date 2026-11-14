@@ -19,7 +19,7 @@ from typing import Optional, Union
 import pandas as pd
 import requests
 
-DEFAULT_URL = "https://desktop-0fv3bsf.taila5ef2b.ts.net/data/v1"
+DEFAULT_URL = "https://data.quantvn.com/v1"
 INTERVALS = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
 MAX_ROWS = 600_000
 _url = os.environ.get("QUANTVN_DATA_URL", DEFAULT_URL).rstrip("/")

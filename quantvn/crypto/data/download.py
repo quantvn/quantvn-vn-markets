@@ -1,10 +1,15 @@
+"""Binance's public archive (data.binance.vision): one zip per symbol, interval and month, no key needed."""
+import io
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import requests
 
-BASE_URL = "https://data.binance.vision/data/spot/monthly/klines/"
+BASE = "https://data.binance.vision/data"
+MARKET_PATH = {"spot": "spot", "perp": "futures/um"}
+BASE_URL = f"{BASE}/spot/monthly/klines/"          # kept for code written against 0.2
 
 VALID_INTERVALS = {
     "1m", "3m", "5m", "15m", "30m",
@@ -12,45 +17,36 @@ VALID_INTERVALS = {
     "1d", "3d", "1w", "1M",
 }
 
-def download_monthly(symbol: str, interval: str, month: str, cache_dir: Path) -> Path:
-    """
-    Download a monthly ZIP file for any symbol & interval, return local path.
-    """
-    cache_dir = cache_dir / symbol / interval
-    cache_dir.mkdir(parents=True, exist_ok=True)
 
+def download_monthly(symbol: str, interval: str, month: str, cache_dir: Path, market: str = "spot") -> Path:
+    """Download (once) the monthly zip of a symbol and interval, return its local path. Raises RuntimeError
+    when Binance has no file for that month."""
+    folder = cache_dir / ("" if market == "spot" else market) / symbol / interval
+    folder.mkdir(parents=True, exist_ok=True)
     zip_name = f"{symbol}-{interval}-{month}.zip"
-    zip_path = cache_dir / zip_name
+    zip_path = folder / zip_name
     if zip_path.exists():
         return zip_path
-
-    url = f"{BASE_URL}{symbol}/{interval}/{zip_name}"
+    url = f"{BASE}/{MARKET_PATH[market]}/monthly/klines/{symbol}/{interval}/{zip_name}"
     resp = requests.get(url, stream=True, timeout=60)
     if resp.status_code != 200:
         raise RuntimeError(f"File not found: {url}")
-
-    with open(zip_path, "wb") as f:
-        for chunk in resp.iter_content(1024*1024):
+    tmp = zip_path.with_suffix(".part")
+    with open(tmp, "wb") as f:
+        for chunk in resp.iter_content(1024 * 1024):
             f.write(chunk)
-
+    tmp.replace(zip_path)
     return zip_path
 
+
 def extract_csv(zip_path: Path) -> pd.DataFrame:
-    """
-    Extract CSV from ZIP and return DataFrame with columns:
-    t, Open, High, Low, Close, Volume
-    """
+    """The klines of a monthly zip: columns t (open time, ms UTC), Open, High, Low, Close, Volume.
+    Handles the header row of the futures archive and the microsecond times of the spot archive from 2025."""
     with zipfile.ZipFile(zip_path, "r") as zf:
-        csv_name = zf.namelist()[0]
-        with zf.open(csv_name) as f:
-            df = pd.read_csv(f, header=None)
-
-    df = df.iloc[:, :6]  # keep first 6 cols
+        with zf.open(zf.namelist()[0]) as f:
+            df = pd.read_csv(io.TextIOWrapper(f), header=None, usecols=range(6), dtype=str)
     df.columns = ["t", "Open", "High", "Low", "Close", "Volume"]
-
-    # ensure t is int64 safe
-    df["t"] = pd.to_numeric(df["t"], errors="coerce")
-    df = df.dropna(subset=["t"])
-    df["t"] = df["t"].astype("int64")
-
-    return df
+    df = df.apply(pd.to_numeric, errors="coerce").dropna(subset=["t", "Open", "Close"])
+    t = df["t"].astype("int64").to_numpy()
+    df["t"] = np.where(t > 10 ** 14, t // 1000, t)
+    return df.reset_index(drop=True)

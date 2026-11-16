@@ -16,6 +16,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
+from quantvn.fx.data import HALF_SPREAD_BP as FX_HALF_SPREAD_BP
 from quantvn.metrics._fills import VN_FUTURES_FEE, VN_STOCK_FEE, VN_STOCK_SELL_TAX, vn_tick
 
 # Costs per market as the Track Record service charges them (GET https://paper.quantvn.com/v1/assets).
@@ -28,6 +29,8 @@ MARKETS = {
     # Binance USD-M perpetuals: 5 bp per side, short allowed, funding settled at every funding event
     "CRYPTO_PERP": {"fee": 5e-4, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
     "US_STOCK": {"fee": 1e-4, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
+    # ECN commission per side; half the pair's spread (quantvn.fx.data.HALF_SPREAD_BP) and the swap come on top
+    "FOREX": {"fee": 0.35e-4, "sell_tax": 0.0, "min_pos": -1.0, "max_pos": 1.0, "spread_ticks": 0.0},
 }
 
 
@@ -52,7 +55,8 @@ class PaperResult:
 
 def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 1, fee: Optional[float] = None,
              sell_tax: Optional[float] = None, spread_ticks: Optional[float] = None,
-             exchange: str = "HOSE", funding: Optional[pd.DataFrame] = None) -> PaperResult:
+             exchange: str = "HOSE", funding: Optional[pd.DataFrame] = None,
+             symbol: Optional[str] = None) -> PaperResult:
     """Price the ``position`` column of `df` with the Track Record fill rule.
 
     `df` needs ``Datetime`` (bar open time), ``Open``, ``Close`` and ``position``, where the position on a
@@ -66,6 +70,9 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
     time t is settled at the first bar that opens at or after t, on the weight held before that bar's fill:
     equity is multiplied by ``1 - weight * rate`` (a long pays a positive rate, a short receives it). A bar
     ``Datetime`` without a time zone is read as UTC.
+
+    ``FOREX``: pass ``symbol`` ("EURUSD") to charge half the pair's spread on every fill, as the service does,
+    and ``funding=quantvn.fx.data.swap_schedule(symbol, start, end, rates)`` for the overnight swap.
     """
     if market not in MARKETS:
         raise ValueError(f"market must be one of {', '.join(MARKETS)}")
@@ -75,6 +82,9 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
     fee = m["fee"] if fee is None else fee
     sell_tax = m["sell_tax"] if sell_tax is None else sell_tax
     spread_ticks = m["spread_ticks"] if spread_ticks is None else spread_ticks
+    fx_half = 0.0
+    if market == "FOREX" and symbol is not None:
+        fx_half = FX_HALF_SPREAD_BP[str(symbol).upper().replace("/", "")] / 1e4
     d = df.sort_values("Datetime").reset_index(drop=True)
     ts = pd.to_datetime(d["Datetime"])
     op, cl = d["Open"].to_numpy(float), d["Close"].to_numpy(float)
@@ -97,6 +107,7 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
             cost = dw * fee + max(max(w, 0.0) - max(new, 0.0), 0.0) * sell_tax
             if spread_ticks:
                 cost += dw * spread_ticks * (vn_tick(op[k], exchange) if market == "VN_STOCK" else 0.0) / 2 / op[k]
+            cost += dw * fx_half
             nav *= 1 - cost
             fills.append((ts.iloc[k], op[k], w, new, cost))
             w = new
@@ -122,6 +133,10 @@ def simulate(df: pd.DataFrame, market: str = "VN_DERIVATIVE", delay_bars: int = 
         notes.append("the monthly contract roll is not simulated here; the Track Record service applies it")
     if market == "CRYPTO_PERP" and funding is None:
         notes.append("funding was not charged: pass funding=quantvn.crypto.data.get_funding_rates(symbol, start, end)")
+    if market == "FOREX" and symbol is None:
+        notes.append("the spread was not charged: pass symbol='EURUSD' (or the pair traded)")
+    if market == "FOREX" and funding is None:
+        notes.append("the swap was not charged: pass funding=quantvn.fx.data.swap_schedule(symbol, start, end, rates)")
     return PaperResult(nav_s, pd.DataFrame(fills, columns=["time", "price", "before", "after", "cost"]), daily, stats, notes)
 
 

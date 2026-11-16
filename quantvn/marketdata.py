@@ -86,7 +86,7 @@ def datasets() -> dict:
 
 
 def symbols(dataset: str) -> list:
-    """Symbols of a dataset: crypto_spot, crypto_perp, crypto_funding, us_stock, us_stock_1d."""
+    """Symbols of a dataset: crypto_spot, crypto_perp, crypto_funding, us_stock, us_stock_1d, forex."""
     return [s["symbol"] for s in _get("/symbols", {"dataset": dataset}).json()["symbols"]]
 
 

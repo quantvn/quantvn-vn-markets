@@ -927,6 +927,7 @@ Dữ liệu cổ phiếu/ETF Mỹ và crypto lấy từ **API dữ liệu thị 
 | `crypto_funding` | Funding rate từng kỳ | Binance | 10 phút |
 | `us_stock` | S&P 500 + ~40 ETF, nến 1 phút phiên chính (09:30–16:00 New York) | Yahoo Finance: chỉ có 30 ngày gần nhất, kho dài thêm mỗi ngày | mỗi giờ |
 | `us_stock_1d` | Nến ngày toàn bộ lịch sử, có `adj_close` | Yahoo Finance | mỗi ngày |
+| `forex` | 28 cặp tiền của USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD, cùng XAUUSD, XAGUSD; nến 1 phút từ 2000–2009 tùy mã | HistData (giá bid, công bố theo tháng); các tuần chưa công bố lấy giá giữa từ TradingView FX_IDC, phần cũ hơn 3,5 ngày lấy từ Yahoo (nến thô hơn) | 10 phút |
 
 #### 6.1. Crypto
 
@@ -985,6 +986,27 @@ marketdata.bars("crypto_spot", "SOLUSDT", "2026-11-01", "2026-11-02", interval="
 ```
 
 Hạn mức (mặc định): không có key 30 yêu cầu/phút và 5 triệu dòng/ngày; có key 120 yêu cầu/phút và 50 triệu dòng/ngày; tối đa 600.000 dòng mỗi yêu cầu (thư viện tự chia nhỏ). Vượt hạn mức: HTTP 429, thư viện tự chờ và thử lại. Đổi địa chỉ API bằng biến môi trường `QUANTVN_DATA_URL`.
+
+#### 6.5. Forex
+
+```python
+from quantvn import paper
+from quantvn.fx import data as fx
+
+fx.list_symbols()                                       # 30 mã: EURUSD, USDJPY, ..., XAUUSD, XAGUSD
+df = fx.get_hist("EURUSD", "15m", start="2026-10-01", end="2026-11-01")   # Datetime theo UTC, volume rỗng
+df["position"] = ...                                    # tỷ trọng vốn, -1 đến 1
+swap = fx.swap_schedule("EURUSD", "2026-10-01", "2026-11-01", rates={"EUR": 2.65, "USD": 4.0})
+print(paper.simulate(df, market="FOREX", symbol="EURUSD", funding=swap))
+```
+
+Chi phí giống Track Record (thị trường `FOREX`, mở từ 16/11/2026):
+
+- **Phí:** 0,35 bp mỗi chiều, bằng hoa hồng tài khoản ECN (3,5 USD cho 100.000 đơn vị).
+- **Chênh lệch giá mua/bán:** mỗi lệnh khớp trả thêm nửa spread của cặp đó, đo trên dữ liệu tick HistData 2019 và 2023 (`fx.HALF_SPREAD_BP`): 0,15 bp với EURUSD, 0,25 bp với USDJPY, đến 1,7 bp với NZDCHF và 7,45 bp với XAGUSD. Truyền `symbol=` để `simulate` tính khoản này.
+- **Swap qua đêm:** giữ vị thế qua 17:00 New York thì trả hoặc nhận chênh lệch lãi suất hai đồng tiền, `(r_quote - r_base) / 365` mỗi ngày với vị thế mua; phiên thứ Tư tính 3 ngày. Track Record dùng lãi suất điều hành của ngân hàng trung ương; `swap_schedule` nhận lãi suất bạn đưa vào (phần trăm/năm). Vàng, bạc không có lãi suất, nên mua XAUUSD phải trả lãi suất USD.
+
+Nến `1d` của API là ngày UTC, không phải ngày forex kết thúc lúc 17:00 New York. Giá trước tháng HistData công bố gần nhất là giá bid, sau đó là giá giữa, nên tại điểm nối có thể lệch khoảng nửa spread.
 
 ---
 
@@ -1049,6 +1071,11 @@ Dự án này được phát hành theo giấy phép **MIT License**. Xem file [
 ---
 
 ## Changelog
+
+### Version 0.4.0
+
+- Thêm `quantvn.fx`: `get_hist`, `list_symbols`, `swap_schedule`, `HALF_SPREAD_BP` cho 28 cặp tiền chính, XAUUSD và XAGUSD (bộ dữ liệu `forex` của API dữ liệu thị trường, mục 6.5)
+- `paper.simulate`: thêm thị trường `FOREX` (phí 0,35 bp, nửa spread từng cặp qua `symbol=`, swap qua `funding=`), trùng với Track Record
 
 ### Version 0.3.0
 

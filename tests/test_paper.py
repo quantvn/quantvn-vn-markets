@@ -48,6 +48,24 @@ def test_daily_statistics():
     assert r.stats["max_drawdown"] == pytest.approx(102 / 103 - 1) and "return" in repr(r)
 
 
+def test_forex_pays_commission_half_spread_and_swap_like_the_service():
+    from quantvn.fx import data as fx
+    # winter: 17:00 New York is 22:00 UTC; Wednesday's rollover counts three days
+    s = fx.swap_schedule("USDJPY", "2026-11-16", "2026-11-21", {"USD": 4.0, "JPY": 1.25})
+    assert [t.strftime("%a %H:%M") for t in s["Datetime"]] == ["Mon 22:00", "Tue 22:00", "Wed 22:00", "Thu 22:00",
+                                                                "Fri 22:00"]
+    assert list(s["rate"]) == pytest.approx([-2.75 / 36500 * d for d in (1, 1, 3, 1, 1)])     # long USD receives
+    assert fx.swap_schedule("XAUUSD", "2026-11-16", "2026-11-17", {"USD": 4.0})["rate"][0] == pytest.approx(4 / 36500)
+    # long EURUSD bought at 21:58 UTC, flat prices, held through Monday's rollover
+    df = frame([1.1] * 5, [1.1] * 5, [1, 1, 1, 1, 1], "2026-11-16 21:57")
+    swap = fx.swap_schedule("EURUSD", "2026-11-16", "2026-11-17", {"EUR": 2.65, "USD": 4.0})
+    r = paper.simulate(df, market="FOREX", symbol="EURUSD", funding=swap)
+    assert r.nav.iloc[-1] == pytest.approx((1 - 0.35e-4 - 0.15e-4) * (1 - 1.35 / 36500))
+    assert r.stats["funding"] == pytest.approx(1.35 / 36500) and not r.notes
+    bare = paper.simulate(df, market="FOREX")
+    assert bare.nav.iloc[-1] == pytest.approx(1 - 0.35e-4) and len(bare.notes) == 2
+
+
 class FakeResponse:
     def __init__(self, status, body):
         self.status_code, self._body, self.text = status, body, str(body)
